@@ -15,7 +15,7 @@ export interface RunTaskOptions {
   title: string;
   task: string;
   signal: AbortSignal;
-  onSession: (sessionId: string) => void;
+  onSession: (sessionId: string, webUrl: string) => void;
 }
 
 type RuntimeEvent =
@@ -152,7 +152,8 @@ export class OpenCodeService {
       const session = created.data;
       if (!session) throw new Error("OpenCode did not return the created session");
       sessionId = session.id;
-      options.onSession(session.id);
+      const webUrl = this.sessionUrl(options.directory, session.id);
+      options.onSession(session.id, webUrl);
 
       const watcherReady = Promise.withResolvers<void>();
       const watcherSignal = AbortSignal.any([eventAbort.signal, signal]);
@@ -196,7 +197,7 @@ export class OpenCodeService {
       signal.throwIfAborted();
       return {
         sessionId: session.id,
-        webUrl: this.sessionUrl(options.directory, session.id),
+        webUrl,
         response: this.textResponse(result.data?.parts ?? []),
         diffs,
         deniedPermissions,
@@ -351,6 +352,6 @@ export class OpenCodeService {
 
   private sessionUrl(directory: string, sessionId: string): string {
     const encodedDirectory = Buffer.from(directory).toString("base64url");
-    return `${this.config.opencodeUrl}/${encodedDirectory}/session/${sessionId}`;
+    return `${this.config.opencodePublicUrl}/${encodedDirectory}/session/${sessionId}`;
   }
 }

@@ -11,6 +11,7 @@ describe("configuration", () => {
 
     assert.deepEqual([...config.allowedUserIds], ["123", "456"]);
     assert.equal(config.opencodeUrl, "http://localhost:4096");
+    assert.equal(config.opencodePublicUrl, "http://localhost:4096");
     assert.equal(config.opencodeAutoApprove, true);
     assert.equal(config.taskTimeoutMs, 30 * 60 * 1_000);
     assert.equal(config.routingTimeoutMs, 2 * 60 * 1_000);
@@ -38,5 +39,17 @@ describe("configuration", () => {
       OPENCODE_AUTO_APPROVE: "false",
     });
     assert.equal(config.opencodeAutoApprove, false);
+  });
+
+  it("uses a separate public OpenCode URL for browser links", () => {
+    const config = loadConfig({
+      DISCORD_TOKEN: "token",
+      DISCORD_ALLOWED_USER_IDS: "123",
+      OPENCODE_URL: "http://opencode:4096",
+      OPENCODE_PUBLIC_URL: "https://opencode.example.com/",
+    });
+
+    assert.equal(config.opencodeUrl, "http://opencode:4096");
+    assert.equal(config.opencodePublicUrl, "https://opencode.example.com");
   });
 });

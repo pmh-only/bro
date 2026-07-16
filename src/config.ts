@@ -7,6 +7,7 @@ export interface AppConfig {
   allowedGuildIds: Set<string>;
   allowedChannelIds: Set<string>;
   opencodeUrl: string;
+  opencodePublicUrl: string;
   opencodeUsername: string;
   opencodePassword?: string;
   opencodeAgent: string;
@@ -63,6 +64,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (opencodeUrl.protocol !== "http:" && opencodeUrl.protocol !== "https:") {
     throw new Error("OPENCODE_URL must use http or https");
   }
+  const opencodePublicUrl = new URL(env.OPENCODE_PUBLIC_URL?.trim() || opencodeUrl);
+  if (opencodePublicUrl.protocol !== "http:" && opencodePublicUrl.protocol !== "https:") {
+    throw new Error("OPENCODE_PUBLIC_URL must use http or https");
+  }
 
   const password = env.OPENCODE_PASSWORD?.trim();
   return {
@@ -72,6 +77,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     allowedGuildIds: idSet(env.DISCORD_ALLOWED_GUILD_IDS, "DISCORD_ALLOWED_GUILD_IDS"),
     allowedChannelIds: idSet(env.DISCORD_ALLOWED_CHANNEL_IDS, "DISCORD_ALLOWED_CHANNEL_IDS"),
     opencodeUrl: opencodeUrl.toString().replace(/\/$/, ""),
+    opencodePublicUrl: opencodePublicUrl.toString().replace(/\/$/, ""),
     opencodeUsername: env.OPENCODE_USERNAME?.trim() || "opencode",
     ...(password ? { opencodePassword: password } : {}),
     opencodeAgent: env.OPENCODE_AGENT?.trim() || "build",

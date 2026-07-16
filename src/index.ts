@@ -35,7 +35,14 @@ function formatJob(job: Job): string {
   const heading = `${job.state[0]?.toUpperCase()}${job.state.slice(1)} job \`${job.id}\` on **${inline(job.project.alias)}**`;
   const elapsed = duration(job);
   if (job.state === "queued") return `${heading}\nWaiting for the current project job to finish.`;
-  if (job.state === "running") return `${heading}${job.sessionId ? `\nOpenCode session: \`${job.sessionId}\`` : ""}`;
+  if (job.state === "running") {
+    const session = job.sessionUrl
+      ? `\n[Open in OpenCode](${job.sessionUrl})`
+      : job.sessionId
+        ? `\nOpenCode session: \`${job.sessionId}\``
+        : "";
+    return `${heading}${session}`;
+  }
   if (job.state === "cancelling") return `${heading}\nStopping the OpenCode session...`;
   if (job.state === "completed") return truncate(`${heading}${elapsed ? ` in ${elapsed}` : ""}\n${job.result || "OpenCode completed without a text response."}`, DISCORD_LIMIT);
   if (job.state === "cancelled") return `${heading}${elapsed ? ` after ${elapsed}` : ""}.`;
@@ -240,8 +247,12 @@ async function main(): Promise<void> {
             title: `Discord: ${truncate(task.replace(/\s+/g, " "), 80)}`,
             task,
             signal: runningJob.controller.signal,
-            onSession: (sessionId) => {
+            onSession: (sessionId, sessionUrl) => {
               runningJob.sessionId = sessionId;
+              runningJob.sessionUrl = sessionUrl;
+              void statusMessage
+                .edit({ content: formatJob(runningJob), allowedMentions: { parse: [] } })
+                .catch((error) => console.error(`Unable to publish OpenCode session ${sessionId}`, error));
             },
           });
           return formatResult(result);

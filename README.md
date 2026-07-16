@@ -34,7 +34,7 @@ The OpenCode port does not need to be exposed to the internet. The Discord bot m
 
 To obtain Discord IDs, enable Developer Mode in Discord, then use **Copy ID** on a user, role, guild, or channel.
 
-If the OpenCode server uses basic authentication, start it with `OPENCODE_SERVER_PASSWORD` and set the same value as `OPENCODE_PASSWORD`. `OPENCODE_USERNAME` defaults to `opencode`.
+`OPENCODE_URL` is the internal API address used by the bot. Set `OPENCODE_PUBLIC_URL` to the browser-accessible authentication-proxy URL so Discord status messages link directly to the project session. If the OpenCode server uses basic authentication, start it with `OPENCODE_SERVER_PASSWORD` and set the same value as `OPENCODE_PASSWORD`. `OPENCODE_USERNAME` defaults to `opencode`.
 
 ## Project Registry
 
@@ -113,7 +113,7 @@ docker run --rm \
   discord-opencode-bot
 ```
 
-Provide an OpenCode provider API key in `.env.docker`, or configure a provider through OpenCode. The persisted home volume also retains code-server settings and extensions, `/home/opencode/.ssh`, and Git configuration.
+Provide an OpenCode provider API key in `.env.docker`, or configure a provider through OpenCode. Set `OPENCODE_PUBLIC_URL` to the OpenCode URL exposed by the authentication proxy; the bot uses it for direct session links while continuing to use localhost for API requests. The persisted home volume also retains code-server settings and extensions, `/home/opencode/.ssh`, and Git configuration.
 
 The Docker client can connect to a separately managed daemon through `DOCKER_HOST` or a mounted Unix socket. The container does not start `dockerd`. When mounting a Unix socket, grant UID/GID `1001` access through the socket permissions or an additional container group.
 

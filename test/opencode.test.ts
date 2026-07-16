@@ -65,6 +65,7 @@ describe("OpenCode task lifecycle", () => {
     });
     const service = new OpenCodeService(config);
     const started = Date.now();
+    let sessionUrl = "";
 
     await assert.rejects(
       service.runTask({
@@ -72,10 +73,16 @@ describe("OpenCode task lifecycle", () => {
         title: "timeout test",
         task: "never starts",
         signal: new AbortController().signal,
-        onSession: () => undefined,
+        onSession: (_sessionId, webUrl) => {
+          sessionUrl = webUrl;
+        },
       }),
       /timed out/,
     );
     assert.ok(Date.now() - started < 1_000, "task timeout should not wait for SSE retries");
+    assert.equal(
+      sessionUrl,
+      `${baseUrl}/${Buffer.from(process.cwd()).toString("base64url")}/session/ses_test`,
+    );
   });
 });

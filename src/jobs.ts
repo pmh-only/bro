@@ -14,6 +14,7 @@ export interface Job {
   startedAt?: number;
   finishedAt?: number;
   sessionId?: string;
+  sessionUrl?: string;
   result?: string;
   error?: string;
   controller: AbortController;
