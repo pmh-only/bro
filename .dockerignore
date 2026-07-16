@@ -1,0 +1,11 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+dist
+node_modules
+projects
+projects.json
+*.log
+.playwright-mcp

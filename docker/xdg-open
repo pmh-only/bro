@@ -1,0 +1,3 @@
+#!/bin/sh
+# OpenCode web opens a browser after startup; containers have no desktop session.
+exit 0

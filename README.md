@@ -75,6 +75,69 @@ OpenCode maps each request to a structured `run`, `clone`, `projects`, `status`,
 
 Keep the Discord token out of source control, use a dedicated bot, and keep the allowlists narrow. Review the project-specific `opencode.json` permissions before enabling automatic approval.
 
+## Docker
+
+The included image runs both services in one container:
+
+- `opencode web --hostname=0.0.0.0 --port=4096`
+- The compiled Discord bot, started after the OpenCode health endpoint responds
+
+It also installs and configures these OpenCode tools:
+
+- Node.js 24 development environment with npm, npx, Corepack, pnpm, Python 3, `make`, GCC/G++, and `pkg-config`
+- Playwright MCP with headless Chromium
+- `grep_app` through `https://mcp.grep.app`
+- `ast-grep` CLI and the local `ast_grep` MCP server
+- Local Context7 MCP; `CONTEXT7_API_KEY` is optional but increases limits
+
+Build the image:
+
+```bash
+docker build -t discord-opencode-bot .
+```
+
+Configure `.env.docker` using `.env.docker.example`, then run:
+
+```bash
+docker run --rm \
+  --name discord-opencode-bot \
+  --env-file .env.docker \
+  --publish 127.0.0.1:4096:4096 \
+  --volume bro-data:/data \
+  --volume bro-projects:/workspace/projects \
+  --volume bro-opencode-share:/root/.local/share/opencode \
+  --volume bro-opencode-state:/root/.local/state/opencode \
+  discord-opencode-bot
+```
+
+Provide an OpenCode provider API key in `.env.docker`, or mount existing OpenCode state/configuration. Mount `/root/.ssh` and Git configuration if cloned projects must use SSH remotes or push commits.
+
+The OpenCode web port is published only on host loopback in this example. If it is exposed to other hosts, set `OPENCODE_SERVER_PASSWORD`; the entrypoint automatically gives the same credentials to the bot.
+
+Persistent paths:
+
+- `/data/projects.json` stores the project registry.
+- `/workspace/projects` stores cloned repositories.
+- `/root/.local/share/opencode` and `/root/.local/state/opencode` store OpenCode state.
+
+The global MCP configuration is in `docker/opencode.json`. Rebuild and restart the container after changing it because OpenCode loads configuration only at startup.
+
+### Multi-Architecture Publishing
+
+`.github/workflows/docker-image.yml` publishes `ghcr.io/pmh-only/bro` on pushes to `main`, version tags matching `v*`, and manual workflow runs.
+
+The workflow does not emulate either architecture:
+
+- `linux/amd64` builds on the native `ubuntu-24.04` runner.
+- `linux/arm64` builds on the native `ubuntu-24.04-arm` runner.
+- A final job downloads both immutable digests and merges them into one multi-platform OCI manifest.
+
+Published tags include the branch or semantic version, the commit SHA, and `latest` for the default branch. Per-architecture GitHub Actions caches are kept separate.
+
+```bash
+docker pull ghcr.io/pmh-only/bro:latest
+```
+
 ## Validation
 
 Run the compiler and test suite with:

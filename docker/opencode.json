@@ -1,0 +1,40 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "playwright": {
+      "type": "local",
+      "command": [
+        "playwright-mcp",
+        "--headless",
+        "--browser",
+        "chromium",
+        "--no-sandbox",
+        "--isolated"
+      ],
+      "enabled": true,
+      "timeout": 30000
+    },
+    "grep_app": {
+      "type": "remote",
+      "url": "https://mcp.grep.app",
+      "enabled": true,
+      "oauth": false,
+      "timeout": 30000
+    },
+    "ast_grep": {
+      "type": "local",
+      "command": ["ast-grep-mcp"],
+      "enabled": true,
+      "timeout": 30000
+    },
+    "context7": {
+      "type": "local",
+      "command": ["context7-mcp", "--transport", "stdio"],
+      "enabled": true,
+      "timeout": 30000
+    }
+  },
+  "experimental": {
+    "mcp_timeout": 30000
+  }
+}
