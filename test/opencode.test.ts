@@ -10,6 +10,7 @@ describe("OpenCode task lifecycle", () => {
   let sessions: Session[] = [];
   let createRequests = 0;
   let connectEvents = false;
+  let promptBody = "";
   const server = createServer((request, response) => {
     const path = new URL(request.url ?? "/", "http://localhost").pathname;
     if (request.method === "GET" && path === "/session") {
@@ -45,8 +46,14 @@ describe("OpenCode task lifecycle", () => {
       return;
     }
     if (request.method === "POST" && path.endsWith("/message")) {
-      response.setHeader("Content-Type", "application/json");
-      response.end(JSON.stringify({ info: {}, parts: [{ type: "text", text: "continued" }] }));
+      request.setEncoding("utf8");
+      request.on("data", (chunk: string) => {
+        promptBody += chunk;
+      });
+      request.on("end", () => {
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify({ info: {}, parts: [{ type: "text", text: "continued" }] }));
+      });
       return;
     }
     if (request.method === "GET" && path.endsWith("/diff")) {
@@ -75,6 +82,7 @@ describe("OpenCode task lifecycle", () => {
     sessions = [];
     createRequests = 0;
     connectEvents = false;
+    promptBody = "";
   });
 
   after(async () => {
@@ -154,5 +162,10 @@ describe("OpenCode task lifecycle", () => {
     assert.equal(selectedSession, "ses_existing");
     assert.equal(result.sessionId, "ses_existing");
     assert.equal(result.response, "continued");
+    const prompt = JSON.parse(promptBody) as { parts: Array<{ type: string; text?: string }> };
+    assert.match(
+      prompt.parts.find((part) => part.type === "text")?.text ?? "",
+      /Co-authorized-by: Bro, the bot <bro@pmh\.codes>/,
+    );
   });
 });
