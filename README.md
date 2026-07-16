@@ -38,6 +38,8 @@ To obtain Discord IDs, enable Developer Mode in Discord, then use **Copy ID** on
 
 Set `OPENCODE_MODEL` to `provider/model` (for example, `openai/gpt-5.2`) to use that model for request routing and project work. Set `OPENCODE_REASONING_EFFORT` to an OpenCode model variant such as `low`, `medium`, `high`, or `xhigh`; supported variants depend on the selected model and provider. Leave either setting empty to use the OpenCode server default.
 
+OpenCode providers normally impose a five-minute limit on an individual model request. The included container disables that provider limit for OpenAI and Anthropic so longer jobs are governed by `OPENCODE_TASK_TIMEOUT_MS` instead (30 minutes by default). `OPENCODE_CONFIG_CONTENT` can still be supplied explicitly to replace the container overlay. When running the bot against an externally managed OpenCode server, set `provider.<provider>.options.timeout` to `false` in that server's `opencode.json` to allow the same long-running behavior.
+
 ## Project Registry
 
 The bot stores friendly aliases and absolute project directories in `projects.json`:

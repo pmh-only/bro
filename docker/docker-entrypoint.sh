@@ -21,6 +21,12 @@ trap 'shutdown; exit 130' INT
 export OPENCODE_URL="${OPENCODE_URL:-http://127.0.0.1:${OPENCODE_PORT:-4096}}"
 export OPENCODE_USERNAME="${OPENCODE_USERNAME:-${OPENCODE_SERVER_USERNAME:-opencode}}"
 export OPENCODE_PASSWORD="${OPENCODE_PASSWORD:-${OPENCODE_SERVER_PASSWORD:-}}"
+# OpenCode providers otherwise stop a single model request after five minutes,
+# before the bot's configurable task deadline. This overlay also covers existing
+# persisted configs; an explicitly supplied overlay remains authoritative.
+if [[ -z "${OPENCODE_CONFIG_CONTENT:-}" ]]; then
+  export OPENCODE_CONFIG_CONTENT='{"provider":{"anthropic":{"options":{"timeout":false}},"openai":{"options":{"timeout":false}}}}'
+fi
 
 config_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/opencode"
 mkdir -p "$config_dir"
