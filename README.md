@@ -77,14 +77,19 @@ Keep the Discord token out of source control, use a dedicated bot, and keep the 
 
 ## Docker
 
-The included image runs both services in one container:
+The included image runs three services in one container:
 
 - `opencode web --hostname=0.0.0.0 --port=4096`
-- The compiled Discord bot, started after the OpenCode health endpoint responds
+- `code-server --bind-addr=0.0.0.0:8080 /home/opencode/workspace`
+- The compiled Discord bot, started after OpenCode and code-server become healthy
 
-It also installs and configures these OpenCode tools:
+All three services run as the `opencode` user (UID/GID `1001`), which has passwordless `sudo` access for development tasks. The default working directory and clone root are `/home/opencode/workspace`.
+
+The development environment also includes:
 
 - Node.js 24 development environment with npm, npx, Corepack, pnpm, Python 3, `make`, GCC/G++, and `pkg-config`
+- code-server 4.128.0
+- Docker CLI 29.6.1; no Docker daemon runs in this container
 - Playwright MCP with headless Chromium
 - `grep_app` through `https://mcp.grep.app`
 - `ast-grep` CLI and the local `ast_grep` MCP server
@@ -102,25 +107,31 @@ Configure `.env.docker` using `.env.docker.example`, then run:
 docker run --rm \
   --name discord-opencode-bot \
   --env-file .env.docker \
-  --publish 127.0.0.1:4096:4096 \
-  --volume bro-data:/data \
-  --volume bro-projects:/workspace/projects \
-  --volume bro-opencode-share:/root/.local/share/opencode \
-  --volume bro-opencode-state:/root/.local/state/opencode \
+  --publish 4096:4096 \
+  --publish 8080:8080 \
+  --volume bro-home:/home/opencode \
   discord-opencode-bot
 ```
 
-Provide an OpenCode provider API key in `.env.docker`, or mount existing OpenCode state/configuration. Mount `/root/.ssh` and Git configuration if cloned projects must use SSH remotes or push commits.
+Provide an OpenCode provider API key in `.env.docker`, or configure a provider through OpenCode. The persisted home volume also retains code-server settings and extensions, `/home/opencode/.ssh`, and Git configuration.
 
-The OpenCode web port is published only on host loopback in this example. If it is exposed to other hosts, set `OPENCODE_SERVER_PASSWORD`; the entrypoint automatically gives the same credentials to the bot.
+The Docker client can connect to a separately managed daemon through `DOCKER_HOST` or a mounted Unix socket. The container does not start `dockerd`. When mounting a Unix socket, grant UID/GID `1001` access through the socket permissions or an additional container group.
+
+OpenCode and code-server bind `0.0.0.0` and both ports are published on all host interfaces for the authentication proxy. code-server has no built-in authentication. Use firewall or network policy rules to ensure clients cannot bypass the proxy and connect to ports `4096` or `8080` directly.
 
 Persistent paths:
 
-- `/data/projects.json` stores the project registry.
-- `/workspace/projects` stores cloned repositories.
-- `/root/.local/share/opencode` and `/root/.local/state/opencode` store OpenCode state.
+- `/home/opencode/data/projects.json` stores the project registry.
+- `/home/opencode/workspace` stores cloned repositories.
+- `/home/opencode/.config/opencode` stores OpenCode settings and MCP configuration.
+- `/home/opencode/.local/share/opencode` and `/home/opencode/.local/state/opencode` store OpenCode state.
+- `/home/opencode/.config/code-server` and `/home/opencode/.local/share/code-server` store code-server settings and extensions.
+- `/home/opencode/.docker` stores Docker client configuration.
+- `/home/opencode` is persisted as one user-home volume.
 
-The global MCP configuration is in `docker/opencode.json`. Rebuild and restart the container after changing it because OpenCode loads configuration only at startup.
+The image seeds `/home/opencode/.config/opencode/opencode.json` from `docker/opencode.json` only when the persistent home volume has no OpenCode configuration. Existing settings are preserved across container restarts and image upgrades. Playwright browsers remain under `/opt/ms-playwright` in the image so a persisted home from another CPU architecture cannot shadow them.
+
+Upgrading from the previous root-based volume layout requires a one-time copy of `/data/projects.json` to `/home/opencode/data/projects.json` and the project and OpenCode volumes into `bro-home`. Replace `/workspace/projects` paths in the migrated registry with `/home/opencode/workspace`. Keep the old volumes until the migrated container has been verified.
 
 ### Multi-Architecture Publishing
 

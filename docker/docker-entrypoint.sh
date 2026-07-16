@@ -2,13 +2,16 @@
 set -Eeuo pipefail
 
 opencode_pid=""
+code_server_pid=""
 bot_pid=""
 
 shutdown() {
   trap - INT TERM
   [[ -n "$bot_pid" ]] && kill -TERM "$bot_pid" 2>/dev/null || true
+  [[ -n "$code_server_pid" ]] && kill -TERM "$code_server_pid" 2>/dev/null || true
   [[ -n "$opencode_pid" ]] && kill -TERM "$opencode_pid" 2>/dev/null || true
   [[ -n "$bot_pid" ]] && wait "$bot_pid" 2>/dev/null || true
+  [[ -n "$code_server_pid" ]] && wait "$code_server_pid" 2>/dev/null || true
   [[ -n "$opencode_pid" ]] && wait "$opencode_pid" 2>/dev/null || true
 }
 
@@ -19,8 +22,21 @@ export OPENCODE_URL="${OPENCODE_URL:-http://127.0.0.1:${OPENCODE_PORT:-4096}}"
 export OPENCODE_USERNAME="${OPENCODE_USERNAME:-${OPENCODE_SERVER_USERNAME:-opencode}}"
 export OPENCODE_PASSWORD="${OPENCODE_PASSWORD:-${OPENCODE_SERVER_PASSWORD:-}}"
 
+config_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/opencode"
+mkdir -p "$config_dir"
+if [[ ! -e "$config_dir/opencode.json" ]]; then
+  install -m 600 /app/docker/opencode.default.json "$config_dir/opencode.json"
+fi
+
 opencode web --hostname=0.0.0.0 --port="${OPENCODE_PORT:-4096}" &
 opencode_pid=$!
+
+NODE_ENV=production code-server \
+  --auth none \
+  --bind-addr "0.0.0.0:${CODE_SERVER_PORT:-8080}" \
+  --disable-telemetry \
+  "$PROJECTS_ROOT" &
+code_server_pid=$!
 
 for _ in $(seq 1 90); do
   if /app/docker/docker-healthcheck.sh >/dev/null 2>&1; then
@@ -30,11 +46,15 @@ for _ in $(seq 1 90); do
     wait "$opencode_pid"
     exit $?
   fi
+  if ! kill -0 "$code_server_pid" 2>/dev/null; then
+    wait "$code_server_pid"
+    exit $?
+  fi
   sleep 1
 done
 
 if ! /app/docker/docker-healthcheck.sh >/dev/null 2>&1; then
-  echo "OpenCode did not become healthy within 90 seconds" >&2
+  echo "OpenCode and code-server did not become healthy within 90 seconds" >&2
   shutdown
   exit 1
 fi
@@ -43,7 +63,7 @@ node /app/dist/src/index.js &
 bot_pid=$!
 
 set +e
-wait -n "$opencode_pid" "$bot_pid"
+wait -n "$opencode_pid" "$code_server_pid" "$bot_pid"
 status=$?
 set -e
 
