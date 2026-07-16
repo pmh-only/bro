@@ -8,7 +8,7 @@ A Discord bot that uses an existing [OpenCode web server](https://opencode.ai/do
 
 The bot first creates a temporary OpenCode session with JSON-schema output to interpret the request. The temporary session has all regular tools disabled and is deleted immediately after routing. There are no command-parsing regular expressions.
 
-For work requests, the bot creates another OpenCode session in the selected project. Jobs are serialized per project, and the Discord status message is updated with the result, session diff summary, and a link to the OpenCode web session. When long-running work completes or fails, the bot sends a separate mention so the requesting user receives a Discord notification.
+For work requests, the bot creates another OpenCode session in the selected project. Jobs are serialized per project, and the Discord status message is updated with the result, session diff summary, and a link to the OpenCode web session. When long-running work completes or fails, the bot sends a separate mention so the requesting user receives a Discord notification. Successful work requests are committed and pushed automatically after verification.
 
 ## Requirements
 
@@ -62,7 +62,7 @@ An authorized natural-language request can also clone and register a project. Ne
 @bot what can you do?
 ```
 
-OpenCode maps each request to a structured `run`, `clone`, `projects`, `status`, `cancel`, `help`, or `unknown` intent. A clone intent can include an immediate task, so cloning, registration, implementation, verification, commit, and push can happen from one Discord message.
+OpenCode maps each request to a structured `run`, `clone`, `projects`, `status`, `cancel`, `help`, or `unknown` intent. A clone intent can include an immediate task, so cloning, registration, implementation, verification, commit, and push happen from one Discord message.
 
 ## Permissions And Safety
 
@@ -71,7 +71,7 @@ OpenCode maps each request to a structured `run`, `clone`, `projects`, `status`,
 - OpenCode permission requests are automatically approved once by default, including external-directory requests. Set `OPENCODE_AUTO_APPROVE=false` to reject permission prompts. Explicit OpenCode `deny` rules remain denied.
 - User tasks are only sent to directories in the project registry. New entries can only be created by the controlled Git clone flow under `PROJECTS_ROOT`.
 - Git runs without a shell or interactive credential prompts and is terminated when the configured clone timeout expires.
-- The bot only tells OpenCode to commit or push when the Discord request explicitly asks for it.
+- The bot tells OpenCode to commit and push all successful work requests after verification. Projects must have Git author identity, credentials, and a pushable remote configured.
 
 Keep the Discord token out of source control, use a dedicated bot, and keep the allowlists narrow. Review the project-specific `opencode.json` permissions before enabling automatic approval.
 

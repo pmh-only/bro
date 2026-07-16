@@ -234,7 +234,7 @@ export class OpenCodeService {
       "Complete this authorized Discord request end-to-end in the current project.",
       "Work only inside the current project; do not access external directories.",
       "Make reasonable implementation decisions without asking interactive questions and run relevant verification.",
-      "Only commit or push when the request explicitly asks for it.",
+      "After completing and verifying the requested work, commit all intended changes and push the current branch to its configured remote.",
       "",
       task,
     ].join("\n");
