@@ -278,7 +278,7 @@ export class OpenCodeService {
 
         if (event.type === "permission.asked") {
           const permission = event.properties;
-          const approve = this.config.opencodeAutoApprove && permission.permission !== "external_directory";
+          const approve = this.config.opencodeAutoApprove;
           if (!approve) denied.push(`${permission.permission}: ${permission.patterns.join(", ")}`);
           await this.post(
             `/permission/${encodeURIComponent(permission.id)}/reply`,
@@ -288,7 +288,7 @@ export class OpenCodeService {
           );
         } else if (event.type === "permission.updated") {
           const permission = event.properties;
-          const approve = this.config.opencodeAutoApprove && permission.type !== "external_directory";
+          const approve = this.config.opencodeAutoApprove;
           if (!approve) denied.push(permission.title);
           await this.post(
             `/permission/${encodeURIComponent(permission.id)}/reply`,

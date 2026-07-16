@@ -9,6 +9,7 @@ import {
 import { hasBotMention, stripBotMention } from "./commands.js";
 import { loadConfig } from "./config.js";
 import { type Job, JobQueue } from "./jobs.js";
+import { terminalJobNotice } from "./notices.js";
 import { OpenCodeService, type TaskResult } from "./opencode.js";
 import { ProjectRegistry } from "./projects.js";
 
@@ -73,6 +74,18 @@ async function main(): Promise<void> {
 
   const reply = (message: Message, content: string) =>
     message.reply({ content: truncate(content, DISCORD_LIMIT), allowedMentions: { parse: [], repliedUser: false } });
+
+  const notifyUser = async (message: Message, content: string): Promise<void> => {
+    try {
+      if (!message.channel.isSendable()) throw new Error("Discord channel is not sendable");
+      await message.channel.send({
+        content: `<@${message.author.id}> ${truncate(content, DISCORD_LIMIT - 32)}`,
+        allowedMentions: { users: [message.author.id] },
+      });
+    } catch (error) {
+      console.error(`Unable to notify Discord user ${message.author.id}`, error);
+    }
+  };
 
   const authorized = (message: Message): boolean => {
     if (config.allowedGuildIds.size && (!message.guildId || !config.allowedGuildIds.has(message.guildId))) return false;
@@ -192,6 +205,7 @@ async function main(): Promise<void> {
             content: `Registered **${inline(project.alias)}**. It is ready for OpenCode tasks.`,
             allowedMentions: { parse: [] },
           });
+          await notifyUser(message, `Project **${inline(project.alias)}** was cloned and registered successfully.`);
           return;
         }
       } else {
@@ -206,6 +220,7 @@ async function main(): Promise<void> {
       }
 
       if (!task) throw new Error("OpenCode did not identify the project task");
+      let terminalNoticeSent = false;
       let job: Job;
       job = jobs.enqueue({
         project,
@@ -213,6 +228,11 @@ async function main(): Promise<void> {
         requestedBy: message.author.id,
         onChange: async (changedJob) => {
           await statusMessage.edit({ content: formatJob(changedJob), allowedMentions: { parse: [] } });
+          const notice = terminalJobNotice(changedJob);
+          if (!terminalNoticeSent && notice) {
+            terminalNoticeSent = true;
+            await notifyUser(message, notice);
+          }
         },
         execute: async (runningJob) => {
           const result = await opencode.runTask({
@@ -233,6 +253,7 @@ async function main(): Promise<void> {
         content: truncate(`Request failed: ${error instanceof Error ? error.message : String(error)}`, DISCORD_LIMIT),
         allowedMentions: { parse: [] },
       });
+      await notifyUser(message, "The OpenCode request failed before completion. See the updated status message for details.");
     } finally {
       requestControllers.delete(requestController);
     }

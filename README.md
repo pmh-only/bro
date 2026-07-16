@@ -8,7 +8,7 @@ A Discord bot that uses an existing [OpenCode web server](https://opencode.ai/do
 
 The bot first creates a temporary OpenCode session with JSON-schema output to interpret the request. The temporary session has all regular tools disabled and is deleted immediately after routing. There are no command-parsing regular expressions.
 
-For work requests, the bot creates another OpenCode session in the selected project. Jobs are serialized per project, and the Discord status message is updated with the result, session diff summary, and a link to the OpenCode web session.
+For work requests, the bot creates another OpenCode session in the selected project. Jobs are serialized per project, and the Discord status message is updated with the result, session diff summary, and a link to the OpenCode web session. When long-running work completes or fails, the bot sends a separate mention so the requesting user receives a Discord notification.
 
 ## Requirements
 
@@ -68,8 +68,7 @@ OpenCode maps each request to a structured `run`, `clone`, `projects`, `status`,
 
 - `DISCORD_ALLOWED_USER_IDS` and `DISCORD_ALLOWED_ROLE_IDS` control who can submit commands. At least one is required.
 - `DISCORD_ALLOWED_GUILD_IDS` and `DISCORD_ALLOWED_CHANNEL_IDS` can further restrict where commands are accepted.
-- OpenCode external-directory permission requests are always rejected.
-- Other OpenCode permission requests are rejected by default so a job cannot silently gain extra access. Set `OPENCODE_AUTO_APPROVE=true` to approve those requests once. Explicit OpenCode `deny` rules remain denied.
+- OpenCode permission requests are automatically approved once by default, including external-directory requests. Set `OPENCODE_AUTO_APPROVE=false` to reject permission prompts. Explicit OpenCode `deny` rules remain denied.
 - User tasks are only sent to directories in the project registry. New entries can only be created by the controlled Git clone flow under `PROJECTS_ROOT`.
 - Git runs without a shell or interactive credential prompts and is terminated when the configured clone timeout expires.
 - The bot only tells OpenCode to commit or push when the Discord request explicitly asks for it.

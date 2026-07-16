@@ -75,7 +75,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     opencodeUsername: env.OPENCODE_USERNAME?.trim() || "opencode",
     ...(password ? { opencodePassword: password } : {}),
     opencodeAgent: env.OPENCODE_AGENT?.trim() || "build",
-    opencodeAutoApprove: booleanValue(env.OPENCODE_AUTO_APPROVE, false),
+    opencodeAutoApprove: booleanValue(env.OPENCODE_AUTO_APPROVE, true),
     taskTimeoutMs: positiveInteger(env.OPENCODE_TASK_TIMEOUT_MS, 30 * 60 * 1_000, "OPENCODE_TASK_TIMEOUT_MS"),
     routingTimeoutMs: positiveInteger(env.OPENCODE_ROUTING_TIMEOUT_MS, 2 * 60 * 1_000, "OPENCODE_ROUTING_TIMEOUT_MS"),
     cloneTimeoutMs: positiveInteger(env.GIT_CLONE_TIMEOUT_MS, 5 * 60 * 1_000, "GIT_CLONE_TIMEOUT_MS"),
