@@ -99,6 +99,7 @@ export class OpenCodeService {
         path: { id: sessionId },
         body: {
           agent: this.config.opencodeAgent,
+          ...this.modelSelection(),
           tools: disabledTools,
           format: { type: "json_schema", schema: intentSchema, retryCount: 2 },
           parts: [{ type: "text", text: this.routingPrompt(request, projectAliases) }],
@@ -171,11 +172,12 @@ export class OpenCodeService {
         path: { id: session.id },
         body: {
           agent: this.config.opencodeAgent,
+          ...this.modelSelection(),
           tools: { question: false },
           parts: [{ type: "text", text: this.prompt(options.task) }],
         },
         signal,
-      });
+      } as unknown as Parameters<typeof client.session.prompt>[0]);
       const watcherFailure = eventWatcher.then<never>(() => {
         if (signal.aborted) throw signal.reason;
         throw new Error("OpenCode event stream ended while the task was running");
@@ -238,6 +240,16 @@ export class OpenCodeService {
       "",
       task,
     ].join("\n");
+  }
+
+  private modelSelection(): Record<string, unknown> {
+    if (!this.config.opencodeModel) return {};
+    return {
+      model: {
+        ...this.config.opencodeModel,
+        ...(this.config.opencodeReasoningEffort ? { variant: this.config.opencodeReasoningEffort } : {}),
+      },
+    };
   }
 
   private routingPrompt(request: string, projectAliases: string[]): string {

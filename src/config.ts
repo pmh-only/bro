@@ -11,6 +11,8 @@ export interface AppConfig {
   opencodeUsername: string;
   opencodePassword?: string;
   opencodeAgent: string;
+  opencodeModel?: { providerID: string; modelID: string };
+  opencodeReasoningEffort?: string;
   opencodeAutoApprove: boolean;
   taskTimeoutMs: number;
   routingTimeoutMs: number;
@@ -53,6 +55,16 @@ function positiveInteger(value: string | undefined, fallback: number, name: stri
   return parsed;
 }
 
+function model(value: string | undefined): AppConfig["opencodeModel"] {
+  const configured = value?.trim();
+  if (!configured) return undefined;
+  const separator = configured.indexOf("/");
+  if (separator <= 0 || separator === configured.length - 1) {
+    throw new Error("OPENCODE_MODEL must use provider/model format");
+  }
+  return { providerID: configured.slice(0, separator), modelID: configured.slice(separator + 1) };
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const allowedUserIds = idSet(env.DISCORD_ALLOWED_USER_IDS, "DISCORD_ALLOWED_USER_IDS");
   const allowedRoleIds = idSet(env.DISCORD_ALLOWED_ROLE_IDS, "DISCORD_ALLOWED_ROLE_IDS");
@@ -70,6 +82,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
 
   const password = env.OPENCODE_PASSWORD?.trim();
+  const opencodeModel = model(env.OPENCODE_MODEL);
   return {
     discordToken: required(env, "DISCORD_TOKEN"),
     allowedUserIds,
@@ -81,6 +94,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     opencodeUsername: env.OPENCODE_USERNAME?.trim() || "opencode",
     ...(password ? { opencodePassword: password } : {}),
     opencodeAgent: env.OPENCODE_AGENT?.trim() || "build",
+    ...(opencodeModel ? { opencodeModel } : {}),
+    ...(env.OPENCODE_REASONING_EFFORT?.trim() ? { opencodeReasoningEffort: env.OPENCODE_REASONING_EFFORT.trim() } : {}),
     opencodeAutoApprove: booleanValue(env.OPENCODE_AUTO_APPROVE, true),
     taskTimeoutMs: positiveInteger(env.OPENCODE_TASK_TIMEOUT_MS, 30 * 60 * 1_000, "OPENCODE_TASK_TIMEOUT_MS"),
     routingTimeoutMs: positiveInteger(env.OPENCODE_ROUTING_TIMEOUT_MS, 2 * 60 * 1_000, "OPENCODE_ROUTING_TIMEOUT_MS"),

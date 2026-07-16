@@ -36,6 +36,8 @@ To obtain Discord IDs, enable Developer Mode in Discord, then use **Copy ID** on
 
 `OPENCODE_URL` is the internal API address used by the bot. Set `OPENCODE_PUBLIC_URL` to the browser-accessible authentication-proxy URL so Discord status messages link directly to the project session. If the OpenCode server uses basic authentication, start it with `OPENCODE_SERVER_PASSWORD` and set the same value as `OPENCODE_PASSWORD`. `OPENCODE_USERNAME` defaults to `opencode`.
 
+Set `OPENCODE_MODEL` to `provider/model` (for example, `openai/gpt-5.2`) to use that model for request routing and project work. Set `OPENCODE_REASONING_EFFORT` to an OpenCode model variant such as `low`, `medium`, `high`, or `xhigh`; supported variants depend on the selected model and provider. Leave either setting empty to use the OpenCode server default.
+
 ## Project Registry
 
 The bot stores friendly aliases and absolute project directories in `projects.json`:
