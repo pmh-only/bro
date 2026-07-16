@@ -8,7 +8,7 @@ A Discord bot that uses an existing [OpenCode web server](https://opencode.ai/do
 
 The bot first creates a temporary OpenCode session with JSON-schema output to interpret the request. The temporary session has all regular tools disabled and is deleted immediately after routing. There are no command-parsing regular expressions.
 
-For work requests, the bot creates another OpenCode session in the selected project. Jobs are serialized per project, and the Discord status message is updated with the result, session diff summary, and a link to the OpenCode web session. When long-running work completes or fails, the bot sends a separate mention so the requesting user receives a Discord notification. Successful work requests are committed and pushed automatically after verification.
+For work requests, the bot continues the most recently updated top-level Discord work session in the selected project, creating one only for the project's first request. This selection uses OpenCode's persisted sessions, so it survives bot restarts. Jobs are serialized per project, and the Discord status message is updated with the result, session diff summary, and a link to the OpenCode web session. When long-running work completes or fails, the bot sends a separate mention so the requesting user receives a Discord notification. Successful work requests are committed and pushed automatically after verification.
 
 ## Requirements
 

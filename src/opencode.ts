@@ -1,4 +1,4 @@
-import { createOpencodeClient, type FileDiff, type OpencodeClient, type Part } from "@opencode-ai/sdk";
+import { createOpencodeClient, type FileDiff, type OpencodeClient, type Part, type Session } from "@opencode-ai/sdk";
 import type { AppConfig } from "./config.js";
 import { intentSchema, type NaturalLanguageIntent, validateIntent } from "./intents.js";
 
@@ -149,9 +149,7 @@ export class OpenCodeService {
     let eventWatcher: Promise<void> | undefined;
 
     try {
-      const created = await client.session.create({ body: { title: options.title }, signal });
-      const session = created.data;
-      if (!session) throw new Error("OpenCode did not return the created session");
+      const session = await this.projectSession(client, options.directory, options.title, signal);
       sessionId = session.id;
       const webUrl = this.sessionUrl(options.directory, session.id);
       options.onSession(session.id, webUrl);
@@ -240,6 +238,23 @@ export class OpenCodeService {
       "",
       task,
     ].join("\n");
+  }
+
+  private async projectSession(
+    client: OpencodeClient,
+    directory: string,
+    title: string,
+    signal: AbortSignal,
+  ): Promise<Session> {
+    const listed = await client.session.list({ query: { directory }, signal });
+    const existing = (listed.data ?? [])
+      .filter((session) => session.directory === directory && !session.parentID && session.title.startsWith("Discord:"))
+      .sort((left, right) => right.time.updated - left.time.updated)[0];
+    if (existing) return existing;
+
+    const created = await client.session.create({ body: { title }, query: { directory }, signal });
+    if (!created.data) throw new Error("OpenCode did not return the created session");
+    return created.data;
   }
 
   private modelSelection(): Record<string, unknown> {
