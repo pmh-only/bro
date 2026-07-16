@@ -235,7 +235,7 @@ export class OpenCodeService {
       "Work only inside the current project; do not access external directories.",
       "Make reasonable implementation decisions without asking interactive questions and run relevant verification.",
       "After completing and verifying the requested work, commit all intended changes and push the current branch to its configured remote.",
-      "Always include this Git trailer in the commit: Co-authorized-by: Bro, the bot <bro@pmh.codes>",
+      "Always include this Git trailer in the commit: Co-authored-by: Bro, the bot <bro@pmh.codes>",
       "",
       task,
     ].join("\n");

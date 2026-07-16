@@ -46,7 +46,7 @@ Only the home directory is persistent storage.
 * The core component of this project is OpenCode.
 * The Discord bot uses OpenCode for NLP and coding tasks.
 * System prompts enforce testing and git operations for each job.
-* Every automated commit includes `Co-authorized-by: Bro, the bot <bro@pmh.codes>`.
+* Every automated commit includes `Co-authored-by: Bro, the bot <bro@pmh.codes>`.
 
 ## Pre-installed MCPs
 My favorite combination of MCPs:

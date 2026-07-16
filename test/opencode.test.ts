@@ -165,7 +165,7 @@ describe("OpenCode task lifecycle", () => {
     const prompt = JSON.parse(promptBody) as { parts: Array<{ type: string; text?: string }> };
     assert.match(
       prompt.parts.find((part) => part.type === "text")?.text ?? "",
-      /Co-authorized-by: Bro, the bot <bro@pmh\.codes>/,
+      /Co-authored-by: Bro, the bot <bro@pmh\.codes>/,
     );
   });
 });
