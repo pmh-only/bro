@@ -13,6 +13,11 @@ describe("OpenCode task lifecycle", () => {
   let promptBody = "";
   const server = createServer((request, response) => {
     const path = new URL(request.url ?? "/", "http://localhost").pathname;
+    if (request.method === "GET" && path === "/global/health") {
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ healthy: true, version: "test" }));
+      return;
+    }
     if (request.method === "GET" && path === "/session") {
       response.setHeader("Content-Type", "application/json");
       response.end(JSON.stringify(sessions));
@@ -93,6 +98,18 @@ describe("OpenCode task lifecycle", () => {
     for (const response of eventResponses) response.end();
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+  });
+
+  it("checks OpenCode health at startup", async () => {
+    const config = loadConfig({
+      DISCORD_TOKEN: "test",
+      DISCORD_ALLOWED_USER_IDS: "1",
+      OPENCODE_URL: baseUrl,
+    });
+    const service = new OpenCodeService(config);
+
+    assert.equal(await service.assertHealthy(), "test");
+    await service.close();
   });
 
   it("does not hang when timing out before the event stream connects", async () => {

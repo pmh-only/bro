@@ -1,5 +1,10 @@
 import { createOpencodeClient, type FileDiff, type OpencodeClient, type Part, type Session } from "@opencode-ai/sdk";
-import { Agent } from "undici";
+import {
+  Agent,
+  fetch as undiciFetch,
+  type RequestInfo as UndiciRequestInfo,
+  type RequestInit as UndiciRequestInit,
+} from "undici";
 import type { AppConfig } from "./config.js";
 import { intentSchema, type NaturalLanguageIntent, validateIntent } from "./intents.js";
 
@@ -384,7 +389,20 @@ export class OpenCodeService {
   }
 
   private request(input: string | URL | Request, init?: RequestInit): ReturnType<typeof fetch> {
-    return fetch(input, { ...init, dispatcher: this.dispatcher } as RequestInit);
+    const nativeRequest = input instanceof Request ? input : undefined;
+    const requestInit = nativeRequest
+      ? {
+          method: nativeRequest.method,
+          headers: Object.fromEntries(nativeRequest.headers),
+          ...(nativeRequest.body ? { body: nativeRequest.body, duplex: "half" as const } : {}),
+          redirect: nativeRequest.redirect,
+          signal: nativeRequest.signal,
+        }
+      : init;
+    return undiciFetch((nativeRequest?.url ?? input) as UndiciRequestInfo, {
+      ...requestInit,
+      dispatcher: this.dispatcher,
+    } as UndiciRequestInit) as unknown as ReturnType<typeof fetch>;
   }
 
   private textResponse(parts: Part[]): string {
