@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it } from "vitest";
 import { validateIntent } from "../src/intents.js";
 
 describe("natural-language intents", () => {

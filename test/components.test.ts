@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it } from "vitest";
 import { ButtonStyle, ComponentType } from "discord.js";
 import { cardComponents, jobComponents, parseJobButton } from "../src/components.js";
 import type { Job, JobState } from "../src/jobs.js";

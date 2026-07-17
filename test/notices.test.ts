@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { describe, it } from "vitest";
 import type { Job, JobState } from "../src/jobs.js";
 import { terminalJobNotice } from "../src/notices.js";
 

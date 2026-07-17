@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer, type ServerResponse } from "node:http";
-import { after, before, beforeEach, describe, it } from "node:test";
+import { afterAll, beforeAll, beforeEach, describe, it } from "vitest";
 import type { Session } from "@opencode-ai/sdk";
 import { loadConfig } from "../src/config.js";
 import { OpenCodeService } from "../src/opencode.js";
@@ -71,7 +71,7 @@ describe("OpenCode task lifecycle", () => {
   });
   let baseUrl = "";
 
-  before(async () => {
+  beforeAll(async () => {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Test server did not bind a TCP port");
@@ -85,7 +85,7 @@ describe("OpenCode task lifecycle", () => {
     promptBody = "";
   });
 
-  after(async () => {
+  afterAll(async () => {
     for (const response of eventResponses) response.end();
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));

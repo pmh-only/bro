@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { describe, it } from "node:test";
+import { describe, it } from "vitest";
 
 describe("Docker OpenCode configuration", () => {
   it("disables the five-minute provider timeout for new and persisted configs", async () => {
