@@ -17,6 +17,15 @@ describe("Docker OpenCode configuration", () => {
     assert.match(dockerfile, /install --mode=0755 .*\/usr\/local\/bin\/kubectl/);
   });
 
+  it("enables an inaccessible standard Docker socket at startup", async () => {
+    const entrypoint = await readFile("docker/docker-entrypoint.sh", "utf8");
+
+    assert.match(entrypoint, /docker_socket="\/var\/run\/docker\.sock"/);
+    assert.match(entrypoint, /\[\[ -z "\$\{DOCKER_HOST:-\}" && -S "\$docker_socket" \]\]/);
+    assert.match(entrypoint, /sudo chmod 0666 "\$docker_socket"/);
+    assert.match(entrypoint, /DOCKER_HOST="unix:\/\/\$docker_socket"/);
+  });
+
   it("disables the five-minute provider timeout for new and persisted configs", async () => {
     const config = JSON.parse(await readFile("docker/opencode.json", "utf8")) as {
       provider?: Record<string, { options?: { timeout?: number | false } }>;

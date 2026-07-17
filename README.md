@@ -43,6 +43,7 @@ Only the home directory is persistent storage.
 
 ### 5. (Optional) Add Docker-in-Docker socket
 * I recommend providing dind to bro for better development environment.
+* When `/var/run/docker.sock` is mounted, the entrypoint grants the `opencode` user read/write access and uses it as `DOCKER_HOST`. This changes the host socket mode to `0666`, which grants every container process Docker daemon access.
 
 ## How it works?
 * The core component of this project is OpenCode.
