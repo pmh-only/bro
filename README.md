@@ -61,6 +61,8 @@ My favorite combination of MCPs:
 * context7
 * playwright
 
+The development image also includes the Docker CLI and `kubectl`.
+
 ## Inspired by
 * OpenCode
 * OhMyOpenAgent (Dori)

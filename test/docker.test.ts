@@ -7,6 +7,16 @@ import { describe, it } from "vitest";
 const execFileAsync = promisify(execFile);
 
 describe("Docker OpenCode configuration", () => {
+  it("installs a checksum-verified multi-architecture kubectl binary", async () => {
+    const dockerfile = await readFile("Dockerfile", "utf8");
+
+    assert.match(dockerfile, /ARG KUBECTL_VERSION=1\.36\.2/);
+    assert.match(dockerfile, /KUBECTL_SHA256_AMD64=[a-f0-9]{64}/);
+    assert.match(dockerfile, /KUBECTL_SHA256_ARM64=[a-f0-9]{64}/);
+    assert.match(dockerfile, /dl\.k8s\.io\/release\/v\$\{KUBECTL_VERSION\}\/bin\/linux\/\$\{TARGETARCH\}\/kubectl/);
+    assert.match(dockerfile, /install --mode=0755 .*\/usr\/local\/bin\/kubectl/);
+  });
+
   it("disables the five-minute provider timeout for new and persisted configs", async () => {
     const config = JSON.parse(await readFile("docker/opencode.json", "utf8")) as {
       provider?: Record<string, { options?: { timeout?: number | false } }>;

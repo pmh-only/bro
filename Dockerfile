@@ -24,6 +24,9 @@ ARG CODE_SERVER_SHA256_ARM64=f8f02c2a81d1a433a4d132716a6f0405f690f6d70dd955942e9
 ARG DOCKER_CLI_VERSION=29.6.1
 ARG DOCKER_CLI_SHA256_AMD64=b0df4a43a98d7ecb708acbdb5a34a3416e13b6e39bcbbdf296f51f0f3442b29f
 ARG DOCKER_CLI_SHA256_ARM64=917a4bb83565bcacb38c430f08daae8b59db3256331ac23f22394f0542509881
+ARG KUBECTL_VERSION=1.36.2
+ARG KUBECTL_SHA256_AMD64=1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82
+ARG KUBECTL_SHA256_ARM64=c957eb8c4bea27a3bb35b269edd9082e27f027f7b76b20b5bf4afebc726c6d3e
 ARG OPENCODE_UID=1001
 ARG OPENCODE_GID=1001
 ARG TARGETARCH
@@ -72,6 +75,19 @@ RUN case "${TARGETARCH}" in \
     && printf '%s  %s\n' "${docker_sha256}" "${docker_archive}" | sha256sum --check --status \
     && tar --extract --gzip --file="${docker_archive}" --directory=/usr/local/bin --strip-components=1 docker/docker \
     && rm "${docker_archive}"
+
+RUN case "${TARGETARCH}" in \
+      amd64) kubectl_sha256="${KUBECTL_SHA256_AMD64}" ;; \
+      arm64) kubectl_sha256="${KUBECTL_SHA256_ARM64}" ;; \
+      *) printf 'Unsupported architecture: %s\n' "${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && kubectl_binary="/tmp/kubectl" \
+    && curl --fail --location --silent --show-error \
+      "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl" \
+      --output "${kubectl_binary}" \
+    && printf '%s  %s\n' "${kubectl_sha256}" "${kubectl_binary}" | sha256sum --check --status \
+    && install --mode=0755 "${kubectl_binary}" /usr/local/bin/kubectl \
+    && rm "${kubectl_binary}"
 
 RUN npm install --global \
       "opencode-ai@${OPENCODE_VERSION}" \
