@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, it } from "vitest";
 import { JobStore } from "../src/jobs.js";
 
@@ -54,6 +55,7 @@ describe("persistent project jobs", () => {
     job.startedAt = 1;
     job.sessionId = "ses_persisted";
     job.sessionUrl = "https://opencode.example/session/ses_persisted";
+    job.baseCommit = "0123456789abcdef";
     job.promptAttempts = 1;
     job.lastPromptAt = Date.now();
     firstStore.save(job);
@@ -68,6 +70,7 @@ describe("persistent project jobs", () => {
     assert.equal(restored?.channelId, "channel-1");
     assert.equal(restored?.messageId, "message-persisted");
     assert.equal(restored?.promptAttempts, 1);
+    assert.equal(restored?.baseCommit, "0123456789abcdef");
     assert.ok((restored?.startedAt ?? 0) > 1, "restart should not count container downtime against the task deadline");
     assert.deepEqual(secondStore.pendingInstructions(job.id).map(({ id, content }) => ({ id, content })), [
       { id: instruction.id, content: "also update the docs" },
@@ -75,5 +78,22 @@ describe("persistent project jobs", () => {
     secondStore.markInstructionSent(instruction.id);
     assert.deepEqual(secondStore.pendingInstructions(job.id), []);
     secondStore.close();
+  });
+
+  it("migrates an existing jobs database to store Git baselines", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "bro-jobs-migration-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "jobs.sqlite");
+    new JobStore(path).close();
+    const oldDatabase = new DatabaseSync(path);
+    oldDatabase.exec("ALTER TABLE jobs DROP COLUMN base_commit");
+    oldDatabase.close();
+
+    const migrated = new JobStore(path);
+    const job = enqueue(migrated, "migrated");
+    job.baseCommit = "abcdef";
+    migrated.save(job);
+    assert.equal(migrated.get(job.id)?.baseCommit, "abcdef");
+    migrated.close();
   });
 });

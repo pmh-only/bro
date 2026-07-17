@@ -22,6 +22,7 @@ export interface Job {
   sessionUrl?: string;
   result?: string;
   error?: string;
+  baseCommit?: string;
   promptAttempts: number;
   lastPromptAt?: number;
   notified: boolean;
@@ -70,6 +71,7 @@ export class JobStore {
         session_url TEXT,
         result TEXT,
         error TEXT,
+        base_commit TEXT,
         prompt_attempts INTEGER NOT NULL DEFAULT 0,
         last_prompt_at INTEGER,
         notified INTEGER NOT NULL DEFAULT 0
@@ -85,6 +87,10 @@ export class JobStore {
       );
       CREATE INDEX IF NOT EXISTS job_instructions_pending ON job_instructions(job_id, sent_at, created_at);
     `);
+    const columns = this.database.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === "base_commit")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN base_commit TEXT");
+    }
   }
 
   enqueue(options: EnqueueOptions): Job {
@@ -110,13 +116,13 @@ export class JobStore {
       .prepare(`
         INSERT INTO jobs (
           id, project_alias, project_directory, task, requested_by, channel_id, message_id, guild_id,
-          state, created_at, started_at, finished_at, session_id, session_url, result, error,
+          state, created_at, started_at, finished_at, session_id, session_url, result, error, base_commit,
           prompt_attempts, last_prompt_at, notified
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           state = excluded.state, started_at = excluded.started_at, finished_at = excluded.finished_at,
           session_id = excluded.session_id, session_url = excluded.session_url, result = excluded.result,
-          error = excluded.error, prompt_attempts = excluded.prompt_attempts,
+          error = excluded.error, base_commit = excluded.base_commit, prompt_attempts = excluded.prompt_attempts,
           last_prompt_at = excluded.last_prompt_at, notified = excluded.notified
       `)
       .run(...this.values(job));
@@ -207,6 +213,7 @@ export class JobStore {
       job.sessionUrl ?? null,
       job.result ?? null,
       job.error ?? null,
+      job.baseCommit ?? null,
       job.promptAttempts,
       job.lastPromptAt ?? null,
       job.notified ? 1 : 0,
@@ -232,6 +239,7 @@ export class JobStore {
       ...(row.session_url ? { sessionUrl: String(row.session_url) } : {}),
       ...(row.result !== null ? { result: String(row.result) } : {}),
       ...(row.error !== null ? { error: String(row.error) } : {}),
+      ...(row.base_commit ? { baseCommit: String(row.base_commit) } : {}),
       promptAttempts: Number(row.prompt_attempts),
       ...(row.last_prompt_at ? { lastPromptAt: Number(row.last_prompt_at) } : {}),
       notified: Boolean(row.notified),

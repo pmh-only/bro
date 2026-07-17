@@ -54,6 +54,7 @@ Only the home directory is persistent storage.
 * Provider request timeouts are disabled for the selected OpenCode model, so the bot's task deadline controls long jobs.
 * OpenCode API requests use a dedicated dispatcher without Node's five-minute response timeout.
 * Jobs and Discord status message IDs are stored in SQLite. A periodic poller restores unfinished work after container restarts and asks OpenCode to continue until it reports verified success.
+* Completion cards compare the job's starting Git commit with the final `HEAD`, so committed changes remain visible in file and line statistics.
 
 ## Pre-installed MCPs
 My favorite combination of MCPs:

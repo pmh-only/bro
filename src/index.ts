@@ -12,6 +12,7 @@ import { hasBotMention, stripBotMention } from "./commands.js";
 import { cardComponents, jobComponents, jobInstructionModal, parseJobButton } from "./components.js";
 import { loadConfig } from "./config.js";
 import { loginWithRetry } from "./discord.js";
+import { committedChangeStats, type ChangeStats, gitHead } from "./git.js";
 import { type Job, JobStore } from "./jobs.js";
 import { terminalJobNotice } from "./notices.js";
 import { OpenCodeService, type TaskResult } from "./opencode.js";
@@ -50,12 +51,16 @@ function formatJob(job: Job): string {
   return truncate(`${heading}${elapsed ? ` after ${elapsed}` : ""}\n${job.error || "Unknown error"}`, DISCORD_LIMIT);
 }
 
-function formatResult(result: TaskResult): string {
-  const additions = result.diffs.reduce((sum, diff) => sum + diff.additions, 0);
-  const deletions = result.diffs.reduce((sum, diff) => sum + diff.deletions, 0);
-  const changed = result.diffs.length
-    ? `Changes: ${result.diffs.length} file(s), +${additions}/-${deletions}`
-    : "Changes: no session diff reported";
+function formatResult(result: TaskResult, committed?: ChangeStats): string {
+  const session = {
+    files: result.diffs.length,
+    additions: result.diffs.reduce((sum, diff) => sum + diff.additions, 0),
+    deletions: result.diffs.reduce((sum, diff) => sum + diff.deletions, 0),
+  };
+  const changes = committed?.files ? committed : session;
+  const changed = changes.files
+    ? `Changes: ${changes.files} file(s), +${changes.additions}/-${changes.deletions}`
+    : "Changes: no file changes reported";
   const permissionNote = result.deniedPermissions.length
     ? `\nRejected permissions: ${result.deniedPermissions.map(inline).join(", ")}`
     : "";
@@ -199,13 +204,21 @@ async function main(): Promise<void> {
     if (snapshot.state === "busy") return;
     if (snapshot.successful) {
       if (jobs.pendingInstructions(job.id).length) return;
+      let committed: ChangeStats | undefined;
+      if (job.baseCommit) {
+        try {
+          committed = await committedChangeStats(job.project.directory, job.baseCommit, AbortSignal.timeout(10_000));
+        } catch (error) {
+          console.warn(`Unable to calculate committed changes for job ${job.id}`, error);
+        }
+      }
       const result = formatResult({
         sessionId: job.sessionId,
         webUrl: job.sessionUrl ?? "",
         response: snapshot.response,
         diffs: snapshot.diffs,
         deniedPermissions: [],
-      });
+      }, committed);
       await finishJob(job, "completed", result);
       return;
     }
@@ -220,6 +233,13 @@ async function main(): Promise<void> {
   };
 
   const startJob = async (job: Job): Promise<void> => {
+    if (!job.baseCommit) {
+      try {
+        job.baseCommit = await gitHead(job.project.directory, AbortSignal.timeout(10_000));
+      } catch (error) {
+        console.warn(`Unable to record Git baseline for job ${job.id}`, error);
+      }
+    }
     const session = await opencode.ensureTaskSession(
       job.project.directory,
       `Discord: ${truncate(job.task.replace(/\s+/g, " "), 80)}`,
