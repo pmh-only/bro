@@ -12,7 +12,7 @@ import { hasBotMention, stripBotMention } from "./commands.js";
 import { cardComponents, jobComponents, parseJobButton } from "./components.js";
 import { loadConfig } from "./config.js";
 import { loginWithRetry } from "./discord.js";
-import { type Job, JobQueue } from "./jobs.js";
+import { type Job, JobStore } from "./jobs.js";
 import { terminalJobNotice } from "./notices.js";
 import { OpenCodeService, type TaskResult } from "./opencode.js";
 import { ProjectRegistry } from "./projects.js";
@@ -41,7 +41,8 @@ function formatJob(job: Job): string {
   if (job.state === "queued") return `${heading}\nWaiting for the current project job to finish.`;
   if (job.state === "running") {
     const session = job.sessionId ? `\nOpenCode session: \`${job.sessionId}\`` : "";
-    return `${heading}${session}`;
+    const attempts = job.promptAttempts > 1 ? `\nContinuation attempts: ${job.promptAttempts - 1}` : "";
+    return `${heading}${session}${attempts}`;
   }
   if (job.state === "cancelling") return `${heading}\nStopping the OpenCode session...`;
   if (job.state === "completed") return truncate(`${heading}${elapsed ? ` in ${elapsed}` : ""}\n${job.result || "OpenCode completed without a text response."}`, DISCORD_LIMIT);
@@ -72,7 +73,8 @@ async function main(): Promise<void> {
   const projects = await ProjectRegistry.load(config.projectsFile);
   const opencode = new OpenCodeService(config);
   const version = await opencode.assertHealthy();
-  const jobs = new JobQueue();
+  const jobs = new JobStore(config.jobsDatabase);
+  jobs.resume();
   const requestControllers = new Set<AbortController>();
 
   let client: Client;
@@ -92,6 +94,30 @@ async function main(): Promise<void> {
 
   const editJob = (message: Message, job: Job) =>
     message.edit({ components: jobComponents(job, formatJob(job)), allowedMentions: { parse: [] } });
+
+  const publishJob = async (job: Job): Promise<void> => {
+    try {
+      const channel = await client.channels.fetch(job.channelId);
+      if (!channel?.isTextBased()) throw new Error("Discord job channel is not text based");
+      const message = await channel.messages.fetch(job.messageId);
+      await editJob(message, job);
+    } catch (error) {
+      console.error(`Unable to update Discord message ${job.messageId} for job ${job.id}`, error);
+    }
+  };
+
+  const notifyJob = async (job: Job, content: string): Promise<void> => {
+    try {
+      const channel = await client.channels.fetch(job.channelId);
+      if (!channel?.isSendable()) throw new Error("Discord job channel is not sendable");
+      await channel.send({
+        content: `<@${job.requestedBy}> ${truncate(content, DISCORD_LIMIT - 32)}`,
+        allowedMentions: { users: [job.requestedBy] },
+      });
+    } catch (error) {
+      console.error(`Unable to notify Discord user ${job.requestedBy}`, error);
+    }
+  };
 
   const notifyUser = async (message: Message, content: string): Promise<void> => {
     try {
@@ -113,6 +139,115 @@ async function main(): Promise<void> {
   };
 
   let shuttingDown = false;
+  let polling: Promise<void> | undefined;
+  let pollTimer: NodeJS.Timeout | undefined;
+
+  const finishJob = async (job: Job, state: "completed" | "failed" | "cancelled", result?: string, error?: string) => {
+    job.state = state;
+    job.finishedAt = Date.now();
+    if (result !== undefined) job.result = result;
+    if (error !== undefined) job.error = error;
+    jobs.save(job);
+    await publishJob(job);
+    const notice = terminalJobNotice(job);
+    if (notice && !job.notified) {
+      await notifyJob(job, notice);
+      job.notified = true;
+      jobs.save(job);
+    }
+  };
+
+  const pollJob = async (job: Job): Promise<void> => {
+    if (job.state === "cancelling") {
+      if (job.sessionId) {
+        await opencode.abortTask(job.project.directory, job.sessionId, AbortSignal.timeout(10_000));
+      }
+      await finishJob(job, "cancelled");
+      return;
+    }
+    if (!job.sessionId || !job.lastPromptAt) return;
+    if (job.startedAt && Date.now() - job.startedAt >= config.taskTimeoutMs) {
+      await opencode.abortTask(job.project.directory, job.sessionId, AbortSignal.timeout(10_000)).catch(() => undefined);
+      await finishJob(job, "failed", undefined, `OpenCode task timed out after ${Math.round(config.taskTimeoutMs / 60_000)} minutes`);
+      return;
+    }
+
+    await opencode.resolvePendingRequests(
+      job.project.directory,
+      job.sessionId,
+      AbortSignal.timeout(config.jobPollIntervalMs),
+    );
+
+    const snapshot = await opencode.taskSnapshot(
+      job.project.directory,
+      job.sessionId,
+      job.lastPromptAt,
+      AbortSignal.timeout(config.jobPollIntervalMs),
+    );
+    if (snapshot.state === "busy") return;
+    if (snapshot.successful) {
+      const result = formatResult({
+        sessionId: job.sessionId,
+        webUrl: job.sessionUrl ?? "",
+        response: snapshot.response,
+        diffs: snapshot.diffs,
+        deniedPermissions: [],
+      });
+      await finishJob(job, "completed", result);
+      return;
+    }
+    if (Date.now() - job.lastPromptAt < config.jobContinueIntervalMs) return;
+
+    job.promptAttempts += 1;
+    job.lastPromptAt = Date.now();
+    if (snapshot.error) job.error = snapshot.error;
+    jobs.save(job);
+    await opencode.submitTask(job.project.directory, job.sessionId, job.task, true, AbortSignal.timeout(30_000));
+    await publishJob(job);
+  };
+
+  const startJob = async (job: Job): Promise<void> => {
+    const session = await opencode.ensureTaskSession(
+      job.project.directory,
+      `Discord: ${truncate(job.task.replace(/\s+/g, " "), 80)}`,
+      AbortSignal.timeout(30_000),
+    );
+    job.state = "running";
+    job.startedAt ??= Date.now();
+    job.sessionId = session.sessionId;
+    job.sessionUrl = session.webUrl;
+    job.promptAttempts += 1;
+    job.lastPromptAt = Date.now();
+    jobs.save(job);
+    await publishJob(job);
+    await opencode.submitTask(job.project.directory, job.sessionId, job.task, false, AbortSignal.timeout(30_000));
+  };
+
+  const runPoll = async (): Promise<void> => {
+    for (const job of jobs.active().filter((candidate) => candidate.state !== "queued")) {
+      try {
+        await pollJob(job);
+      } catch (error) {
+        console.error(`Unable to poll OpenCode job ${job.id}`, error);
+      }
+    }
+    for (const job of jobs.ready()) {
+      try {
+        await startJob(job);
+      } catch (error) {
+        job.error = error instanceof Error ? error.message : String(error);
+        jobs.save(job);
+        await publishJob(job);
+      }
+    }
+  };
+
+  function pollJobs(): Promise<void> {
+    if (shuttingDown) return Promise.resolve();
+    if (!polling) polling = runPoll().finally(() => (polling = undefined));
+    return polling;
+  }
+
   const handleMessage = async (message: Message): Promise<void> => {
     if (shuttingDown) return;
     if (message.author.bot || !client.user || !hasBotMention(message.content, client.user.id)) return;
@@ -229,38 +364,16 @@ async function main(): Promise<void> {
       }
 
       if (!task) throw new Error("OpenCode did not identify the project task");
-      let terminalNoticeSent = false;
-      let job: Job;
-      job = jobs.enqueue({
+      const job = jobs.enqueue({
         project,
         task,
         requestedBy: message.author.id,
-        onChange: async (changedJob) => {
-          await editJob(statusMessage, changedJob);
-          const notice = terminalJobNotice(changedJob);
-          if (!terminalNoticeSent && notice) {
-            terminalNoticeSent = true;
-            await notifyUser(message, notice);
-          }
-        },
-        execute: async (runningJob) => {
-          const result = await opencode.runTask({
-            directory: project.directory,
-            title: `Discord: ${truncate(task.replace(/\s+/g, " "), 80)}`,
-            task,
-            signal: runningJob.controller.signal,
-            onSession: (sessionId, sessionUrl) => {
-              runningJob.sessionId = sessionId;
-              runningJob.sessionUrl = sessionUrl;
-              void editJob(statusMessage, runningJob).catch((error) =>
-                console.error(`Unable to publish OpenCode session ${sessionId}`, error),
-              );
-            },
-          });
-          return formatResult(result);
-        },
+        channelId: message.channelId,
+        messageId: statusMessage.id,
+        ...(message.guildId ? { guildId: message.guildId } : {}),
       });
       await editJob(statusMessage, job);
+      void pollJobs();
     } catch (error) {
       await editCard(
         statusMessage,
@@ -308,7 +421,7 @@ async function main(): Promise<void> {
       }
 
       await interaction.deferUpdate();
-      await jobs.cancel(job.id);
+      jobs.cancel(job.id);
       const current = jobs.get(job.id);
       if (current) {
         await interaction.message.edit({ components: jobComponents(current, formatJob(current)), allowedMentions: { parse: [] } });
@@ -346,12 +459,18 @@ async function main(): Promise<void> {
       console.error(`Discord login failed; retrying in ${Math.round(delayMs / 1_000)} seconds`, error);
     },
   });
+  void Promise.all(jobs.active().map((job) => publishJob(job))).then(() => pollJobs());
+  pollTimer = setInterval(() => void pollJobs(), config.jobPollIntervalMs);
+  pollTimer.unref();
 
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
+    if (pollTimer) clearInterval(pollTimer);
     for (const controller of requestControllers) controller.abort(new Error("Bot is shutting down"));
-    await jobs.cancelAll();
+    await polling;
+    jobs.close();
+    await opencode.close();
     client.destroy();
     process.exitCode = 0;
   };

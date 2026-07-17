@@ -10,10 +10,13 @@ function job(state: JobState): Job {
     project: { alias: "example", directory: "/tmp/example" },
     task: "test",
     requestedBy: "1",
+    channelId: "channel",
+    messageId: "message",
     state,
     createdAt: Date.now(),
     sessionUrl: "https://opencode.example/session/abcd",
-    controller: new AbortController(),
+    promptAttempts: 1,
+    notified: false,
   };
 }
 

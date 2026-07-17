@@ -7,5 +7,6 @@ dist
 node_modules
 projects
 projects.json
+*.sqlite*
 *.log
 .playwright-mcp

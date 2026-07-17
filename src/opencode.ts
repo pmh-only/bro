@@ -21,42 +21,20 @@ export interface TaskResult {
   deniedPermissions: string[];
 }
 
-export interface RunTaskOptions {
-  directory: string;
-  title: string;
-  task: string;
-  signal: AbortSignal;
-  onSession: (sessionId: string, webUrl: string) => void;
+export interface AsyncTaskSession {
+  sessionId: string;
+  webUrl: string;
 }
 
-type RuntimeEvent =
-  | { type: "server.connected"; properties: Record<string, unknown> }
-  | {
-      type: "permission.asked";
-      properties: {
-        id: string;
-        sessionID: string;
-        permission: string;
-        patterns: string[];
-      };
-    }
-  | {
-      type: "permission.updated";
-      properties: {
-        id: string;
-        sessionID: string;
-        type: string;
-        title: string;
-      };
-    }
-  | {
-      type: "question.asked";
-      properties: {
-        id: string;
-        sessionID: string;
-        questions: Array<{ question: string }>;
-      };
-    };
+export interface TaskSnapshot {
+  state: "busy" | "idle";
+  successful: boolean;
+  response: string;
+  error?: string;
+  diffs: FileDiff[];
+}
+
+const successMarker = "BRO_JOB_SUCCESS";
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -151,99 +129,90 @@ export class OpenCodeService {
     }
   }
 
-  async runTask(options: RunTaskOptions): Promise<TaskResult> {
-    const timeout = AbortSignal.timeout(this.config.taskTimeoutMs);
-    const signal = AbortSignal.any([options.signal, timeout]);
-    const client = createOpencodeClient({
-      baseUrl: this.config.opencodeUrl,
-      directory: options.directory,
-      headers: this.headers,
-      fetch: (request) => this.request(request),
-      throwOnError: true,
-    });
-    const eventAbort = new AbortController();
-    const deniedPermissions: string[] = [];
-    let sessionId: string | undefined;
-    let eventWatcher: Promise<void> | undefined;
+  async ensureTaskSession(directory: string, title: string, signal: AbortSignal): Promise<AsyncTaskSession> {
+    const client = this.client(directory);
+    const session = await this.projectSession(client, directory, title, signal);
+    return { sessionId: session.id, webUrl: this.sessionUrl(directory, session.id) };
+  }
 
-    try {
-      const session = await this.projectSession(client, options.directory, options.title, signal);
-      sessionId = session.id;
-      const webUrl = this.sessionUrl(options.directory, session.id);
-      options.onSession(session.id, webUrl);
+  async submitTask(
+    directory: string,
+    sessionId: string,
+    task: string,
+    continuation: boolean,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const text = continuation
+      ? [
+          "The persisted Discord job is still incomplete. Continue working on the original task end-to-end.",
+          "Inspect the current repository and session state, finish verification, commit, and push.",
+          `Only when every requested step has succeeded, end your response with ${successMarker}.`,
+          "",
+          task,
+        ].join("\n")
+      : this.prompt(task);
+    await this.client(directory).session.promptAsync({
+      path: { id: sessionId },
+      body: {
+        agent: this.config.opencodeAgent,
+        ...this.modelSelection(),
+        tools: { question: false },
+        parts: [{ type: "text", text }],
+      },
+      signal,
+    } as unknown as Parameters<OpencodeClient["session"]["promptAsync"]>[0]);
+  }
 
-      const watcherReady = Promise.withResolvers<void>();
-      const watcherSignal = AbortSignal.any([eventAbort.signal, signal]);
-      eventWatcher = this.watchEvents(
-        client,
-        session.id,
-        options.directory,
-        watcherSignal,
-        deniedPermissions,
-        watcherReady,
-      );
-      await watcherReady.promise;
+  async taskSnapshot(directory: string, sessionId: string, after: number, signal: AbortSignal): Promise<TaskSnapshot> {
+    const client = this.client(directory);
+    const statuses = await client.session.status({ query: { directory }, signal });
+    const status = statuses.data?.[sessionId];
+    if (status && status.type !== "idle") {
+      return { state: "busy", successful: false, response: "", diffs: [] };
+    }
 
-      const prompt = client.session.prompt({
-        path: { id: session.id },
-        body: {
-          agent: this.config.opencodeAgent,
-          ...this.modelSelection(),
-          tools: { question: false },
-          parts: [{ type: "text", text: this.prompt(options.task) }],
-        },
+    const messages = await client.session.messages({ path: { id: sessionId }, query: { directory, limit: 20 }, signal });
+    const assistant = [...(messages.data ?? [])]
+      .reverse()
+      .find((message) => message.info.role === "assistant" && message.info.time.created >= after);
+    if (!assistant || assistant.info.role !== "assistant") {
+      return { state: "idle", successful: false, response: "", diffs: [] };
+    }
+    const response = this.textResponse(assistant.parts);
+    const successful = response.includes(successMarker) && !assistant.info.error;
+    let diffs: FileDiff[] = [];
+    if (successful) {
+      const result = await client.session.diff({ path: { id: sessionId }, query: { directory }, signal });
+      diffs = result.data ?? [];
+    }
+    return {
+      state: "idle",
+      successful,
+      response: response.replace(successMarker, "").trim(),
+      ...(assistant.info.error ? { error: errorMessage(assistant.info.error.data) } : {}),
+      diffs,
+    };
+  }
+
+  async abortTask(directory: string, sessionId: string, signal: AbortSignal): Promise<void> {
+    await this.client(directory).session.abort({ path: { id: sessionId }, query: { directory }, signal });
+  }
+
+  async resolvePendingRequests(directory: string, sessionId: string, signal: AbortSignal): Promise<void> {
+    const [permissions, questions] = await Promise.all([
+      this.get<Array<{ id: string; sessionID: string }>>("/permission", directory, signal),
+      this.get<Array<{ id: string; sessionID: string }>>("/question", directory, signal),
+    ]);
+    for (const permission of permissions.filter((request) => request.sessionID === sessionId)) {
+      await this.post(
+        `/permission/${encodeURIComponent(permission.id)}/reply`,
+        directory,
+        { reply: this.config.opencodeAutoApprove ? "once" : "reject" },
         signal,
-      } as unknown as Parameters<typeof client.session.prompt>[0]);
-      const watcherFailure = eventWatcher.then<never>(() => {
-        if (signal.aborted) throw signal.reason;
-        throw new Error("OpenCode event stream ended while the task was running");
-      });
-      const result = await Promise.race([prompt, watcherFailure]);
-
-      if (result.data?.info.error) {
-        throw new Error(`OpenCode task failed: ${errorMessage(result.data.info.error.data)}`);
-      }
-
-      let diffs: FileDiff[] = [];
-      try {
-        const diffResult = await client.session.diff({ path: { id: session.id }, signal });
-        diffs = diffResult.data ?? [];
-      } catch (error) {
-        console.warn(`Unable to fetch diff for OpenCode session ${session.id}:`, error);
-      }
-
-      signal.throwIfAborted();
-      return {
-        sessionId: session.id,
-        webUrl,
-        response: this.textResponse(result.data?.parts ?? []),
-        diffs,
-        deniedPermissions,
-      };
-    } catch (error) {
-      if (sessionId && signal.aborted) {
-        try {
-          await client.session.abort({
-            path: { id: sessionId },
-            signal: AbortSignal.timeout(5_000),
-          });
-        } catch (abortError) {
-          console.warn(`Unable to abort OpenCode session ${sessionId}:`, abortError);
-        }
-      }
-      if (timeout.aborted && !options.signal.aborted) {
-        throw new Error(`OpenCode task timed out after ${Math.round(this.config.taskTimeoutMs / 60_000)} minutes`);
-      }
-      throw error;
-    } finally {
-      eventAbort.abort();
-      if (eventWatcher) {
-        try {
-          await eventWatcher;
-        } catch (error) {
-          if (!signal.aborted) throw error;
-        }
-      }
+      );
+    }
+    for (const question of questions.filter((request) => request.sessionID === sessionId)) {
+      await this.post(`/question/${encodeURIComponent(question.id)}/reject`, directory, undefined, signal);
     }
   }
 
@@ -254,6 +223,7 @@ export class OpenCodeService {
       "Make reasonable implementation decisions without asking interactive questions and run relevant verification.",
       "After completing and verifying the requested work, commit all intended changes and push the current branch to its configured remote.",
       "Always include this Git trailer in the commit: Co-authored-by: Bro, the bot <bro@pmh.codes>",
+      `Only when every requested step has succeeded, end your response with ${successMarker}.`,
       "",
       task,
     ].join("\n");
@@ -286,6 +256,16 @@ export class OpenCodeService {
     };
   }
 
+  private client(directory: string): OpencodeClient {
+    return createOpencodeClient({
+      baseUrl: this.config.opencodeUrl,
+      directory,
+      headers: this.headers,
+      fetch: (request) => this.request(request),
+      throwOnError: true,
+    });
+  }
+
   private routingPrompt(request: string, projectAliases: string[]): string {
     return [
       "Interpret the authorized Discord user's natural-language request. Do not execute it.",
@@ -303,74 +283,6 @@ export class OpenCodeService {
     ].join("\n");
   }
 
-  private async watchEvents(
-    client: OpencodeClient,
-    sessionId: string,
-    directory: string,
-    signal: AbortSignal,
-    denied: string[],
-    ready: PromiseWithResolvers<void>,
-  ): Promise<void> {
-    let connected = false;
-    try {
-      const events = await client.event.subscribe({ signal, sseMaxRetryAttempts: 1 });
-      for await (const sdkEvent of events.stream) {
-        const event = sdkEvent as unknown as RuntimeEvent;
-        if (event.type === "server.connected") {
-          connected = true;
-          ready.resolve();
-          continue;
-        }
-        if (event.properties?.sessionID !== sessionId) continue;
-
-        if (event.type === "permission.asked") {
-          const permission = event.properties;
-          const approve = this.config.opencodeAutoApprove;
-          if (!approve) denied.push(`${permission.permission}: ${permission.patterns.join(", ")}`);
-          await this.post(
-            `/permission/${encodeURIComponent(permission.id)}/reply`,
-            directory,
-            { reply: approve ? "once" : "reject" },
-            signal,
-          );
-        } else if (event.type === "permission.updated") {
-          const permission = event.properties;
-          const approve = this.config.opencodeAutoApprove;
-          if (!approve) denied.push(permission.title);
-          await this.post(
-            `/permission/${encodeURIComponent(permission.id)}/reply`,
-            directory,
-            { reply: approve ? "once" : "reject" },
-            signal,
-          );
-        } else if (event.type === "question.asked") {
-          denied.push(`Question: ${event.properties.questions.map((question) => question.question).join("; ")}`);
-          await this.post(
-            `/question/${encodeURIComponent(event.properties.id)}/reject`,
-            directory,
-            undefined,
-            signal,
-          );
-        }
-      }
-      if (!connected) {
-        const error = signal.aborted
-          ? signal.reason instanceof Error
-            ? signal.reason
-            : new Error("OpenCode event stream was cancelled before connecting")
-          : new Error("OpenCode event stream ended before connecting");
-        ready.reject(error);
-        if (!signal.aborted) throw error;
-      } else if (!signal.aborted) {
-        throw new Error("OpenCode event stream ended unexpectedly");
-      }
-    } catch (error) {
-      ready.reject(error);
-      if (!signal.aborted) console.error(`OpenCode event watcher failed for session ${sessionId}`, error);
-      throw error;
-    }
-  }
-
   private async post(
     path: string,
     directory: string,
@@ -386,6 +298,14 @@ export class OpenCodeService {
       signal,
     });
     if (!response.ok) throw new Error(`OpenCode ${path} failed with HTTP ${response.status}`);
+  }
+
+  private async get<T>(path: string, directory: string, signal: AbortSignal): Promise<T> {
+    const url = new URL(path, `${this.config.opencodeUrl}/`);
+    url.searchParams.set("directory", directory);
+    const response = await this.request(url, { headers: this.headers, signal });
+    if (!response.ok) throw new Error(`OpenCode ${path} failed with HTTP ${response.status}`);
+    return (await response.json()) as T;
   }
 
   private request(input: string | URL | Request, init?: RequestInit): ReturnType<typeof fetch> {

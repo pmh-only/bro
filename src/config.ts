@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 export interface AppConfig {
   discordToken: string;
@@ -17,6 +17,9 @@ export interface AppConfig {
   taskTimeoutMs: number;
   routingTimeoutMs: number;
   cloneTimeoutMs: number;
+  jobPollIntervalMs: number;
+  jobContinueIntervalMs: number;
+  jobsDatabase: string;
   projectsFile: string;
   projectsRoot: string;
 }
@@ -83,6 +86,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   const password = env.OPENCODE_PASSWORD?.trim();
   const opencodeModel = model(env.OPENCODE_MODEL);
+  const projectsFile = resolve(env.PROJECTS_FILE?.trim() || "projects.json");
   return {
     discordToken: required(env, "DISCORD_TOKEN"),
     allowedUserIds,
@@ -100,7 +104,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     taskTimeoutMs: positiveInteger(env.OPENCODE_TASK_TIMEOUT_MS, 30 * 60 * 1_000, "OPENCODE_TASK_TIMEOUT_MS"),
     routingTimeoutMs: positiveInteger(env.OPENCODE_ROUTING_TIMEOUT_MS, 2 * 60 * 1_000, "OPENCODE_ROUTING_TIMEOUT_MS"),
     cloneTimeoutMs: positiveInteger(env.GIT_CLONE_TIMEOUT_MS, 5 * 60 * 1_000, "GIT_CLONE_TIMEOUT_MS"),
-    projectsFile: resolve(env.PROJECTS_FILE?.trim() || "projects.json"),
+    jobPollIntervalMs: positiveInteger(env.JOB_POLL_INTERVAL_MS, 10_000, "JOB_POLL_INTERVAL_MS"),
+    jobContinueIntervalMs: positiveInteger(env.JOB_CONTINUE_INTERVAL_MS, 60_000, "JOB_CONTINUE_INTERVAL_MS"),
+    jobsDatabase: resolve(env.JOBS_DATABASE?.trim() || join(dirname(projectsFile), "jobs.sqlite")),
+    projectsFile,
     projectsRoot: resolve(env.PROJECTS_ROOT?.trim() || "projects"),
   };
 }

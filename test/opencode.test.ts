@@ -1,16 +1,19 @@
 import assert from "node:assert/strict";
-import { createServer, type ServerResponse } from "node:http";
+import { createServer } from "node:http";
 import { afterAll, beforeAll, beforeEach, describe, it } from "vitest";
 import type { Session } from "@opencode-ai/sdk";
 import { loadConfig } from "../src/config.js";
 import { opencodeDispatcherOptions, OpenCodeService } from "../src/opencode.js";
 
 describe("OpenCode task lifecycle", () => {
-  const eventResponses = new Set<ServerResponse>();
   let sessions: Session[] = [];
   let createRequests = 0;
-  let connectEvents = false;
-  let promptBody = "";
+  let asyncPromptBodies: string[] = [];
+  let sessionStatuses: Record<string, { type: "idle" | "busy" }> = {};
+  let sessionMessages: unknown[] = [];
+  let permissions: unknown[] = [];
+  let questions: unknown[] = [];
+  let resolvedRequests: string[] = [];
   const server = createServer((request, response) => {
     const path = new URL(request.url ?? "/", "http://localhost").pathname;
     if (request.method === "GET" && path === "/global/health") {
@@ -38,27 +41,41 @@ describe("OpenCode task lifecycle", () => {
       );
       return;
     }
-    if (request.method === "GET" && path === "/event") {
-      response.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      });
-      response.flushHeaders();
-      response.write(connectEvents ? 'data: {"type":"server.connected","properties":{}}\n\n' : ": waiting\n\n");
-      eventResponses.add(response);
-      response.once("close", () => eventResponses.delete(response));
+    if (request.method === "GET" && path === "/session/status") {
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify(sessionStatuses));
       return;
     }
-    if (request.method === "POST" && path.endsWith("/message")) {
+    if (request.method === "GET" && path === "/permission") {
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify(permissions));
+      return;
+    }
+    if (request.method === "GET" && path === "/question") {
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify(questions));
+      return;
+    }
+    if (request.method === "POST" && (path.includes("/permission/") || path.includes("/question/"))) {
+      resolvedRequests.push(path);
+      response.setHeader("Content-Type", "application/json");
+      response.end("true");
+      return;
+    }
+    if (request.method === "POST" && path.endsWith("/prompt_async")) {
+      let body = "";
       request.setEncoding("utf8");
-      request.on("data", (chunk: string) => {
-        promptBody += chunk;
-      });
+      request.on("data", (chunk: string) => (body += chunk));
       request.on("end", () => {
-        response.setHeader("Content-Type", "application/json");
-        response.end(JSON.stringify({ info: {}, parts: [{ type: "text", text: "continued" }] }));
+        asyncPromptBodies.push(body);
+        response.statusCode = 204;
+        response.end();
       });
+      return;
+    }
+    if (request.method === "GET" && path.endsWith("/message")) {
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify(sessionMessages));
       return;
     }
     if (request.method === "GET" && path.endsWith("/diff")) {
@@ -90,12 +107,15 @@ describe("OpenCode task lifecycle", () => {
   beforeEach(() => {
     sessions = [];
     createRequests = 0;
-    connectEvents = false;
-    promptBody = "";
+    asyncPromptBodies = [];
+    sessionStatuses = {};
+    sessionMessages = [];
+    permissions = [];
+    questions = [];
+    resolvedRequests = [];
   });
 
   afterAll(async () => {
-    for (const response of eventResponses) response.end();
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
   });
@@ -112,41 +132,9 @@ describe("OpenCode task lifecycle", () => {
     await service.close();
   });
 
-  it("does not hang when timing out before the event stream connects", async () => {
-    const config = loadConfig({
-      DISCORD_TOKEN: "test",
-      DISCORD_ALLOWED_USER_IDS: "1",
-      OPENCODE_URL: baseUrl,
-      OPENCODE_TASK_TIMEOUT_MS: "200",
-    });
-    const service = new OpenCodeService(config);
-    const started = Date.now();
-    let sessionUrl = "";
-
-    await assert.rejects(
-      service.runTask({
-        directory: process.cwd(),
-        title: "timeout test",
-        task: "never starts",
-        signal: new AbortController().signal,
-        onSession: (_sessionId, webUrl) => {
-          sessionUrl = webUrl;
-        },
-      }),
-      /timed out/,
-    );
-    assert.ok(Date.now() - started < 1_000, "task timeout should not wait for SSE retries");
-    assert.equal(
-      sessionUrl,
-      `${baseUrl}/${Buffer.from(process.cwd()).toString("base64url")}/session/ses_test`,
-    );
-    assert.equal(createRequests, 1);
-    await service.close();
-  });
-
-  it("continues the latest project Discord session instead of creating one", async () => {
+  it("submits async work and requires an explicit success marker", async () => {
     const now = Date.now();
-    const session = (id: string, title: string, updated: number, parentID?: string): Session => ({
+    const storedSession = (id: string, title: string, updated: number, parentID?: string): Session => ({
       id,
       projectID: "project",
       directory: process.cwd(),
@@ -156,39 +144,43 @@ describe("OpenCode task lifecycle", () => {
       time: { created: updated, updated },
     });
     sessions = [
-      session("ses_manual", "Manual work", now + 3),
-      session("ses_existing", "Discord: previous task", now + 1),
-      session("ses_old", "Discord: old task", now),
-      session("ses_child", "Discord: child", now + 2, "ses_existing"),
+      storedSession("ses_manual", "Manual work", now + 3),
+      storedSession("ses_async", "Discord: existing", now + 1),
+      storedSession("ses_old", "Discord: old", now),
+      storedSession("ses_child", "Discord: child", now + 2, "ses_async"),
     ];
-    connectEvents = true;
-    const config = loadConfig({
+    const service = new OpenCodeService(loadConfig({
       DISCORD_TOKEN: "test",
       DISCORD_ALLOWED_USER_IDS: "1",
       OPENCODE_URL: baseUrl,
-    });
-    const service = new OpenCodeService(config);
-    let selectedSession = "";
-
-    const result = await service.runTask({
-      directory: process.cwd(),
-      title: "Discord: current task",
-      task: "continue the work",
-      signal: new AbortController().signal,
-      onSession: (sessionId) => {
-        selectedSession = sessionId;
-      },
-    });
-
+    }));
+    const session = await service.ensureTaskSession(process.cwd(), "Discord: async", AbortSignal.timeout(1_000));
+    assert.equal(session.sessionId, "ses_async");
     assert.equal(createRequests, 0);
-    assert.equal(selectedSession, "ses_existing");
-    assert.equal(result.sessionId, "ses_existing");
-    assert.equal(result.response, "continued");
-    const prompt = JSON.parse(promptBody) as { parts: Array<{ type: string; text?: string }> };
-    assert.match(
-      prompt.parts.find((part) => part.type === "text")?.text ?? "",
-      /Co-authored-by: Bro, the bot <bro@pmh\.codes>/,
-    );
+    await service.submitTask(process.cwd(), session.sessionId, "finish it", false, AbortSignal.timeout(1_000));
+    assert.match(asyncPromptBodies[0] ?? "", /BRO_JOB_SUCCESS/);
+
+    sessionStatuses = { ses_async: { type: "idle" } };
+    sessionMessages = [{
+      info: { id: "msg_1", sessionID: "ses_async", role: "assistant", parentID: "user_1", time: { created: now + 1 } },
+      parts: [{ type: "text", text: "not finished" }],
+    }];
+    assert.equal((await service.taskSnapshot(process.cwd(), "ses_async", now, AbortSignal.timeout(1_000))).successful, false);
+
+    await service.submitTask(process.cwd(), "ses_async", "finish it", true, AbortSignal.timeout(1_000));
+    assert.match(asyncPromptBodies[1] ?? "", /still incomplete/);
+    sessionMessages = [{
+      info: { id: "msg_2", sessionID: "ses_async", role: "assistant", parentID: "user_2", time: { created: now + 2 } },
+      parts: [{ type: "text", text: "all done\nBRO_JOB_SUCCESS" }],
+    }];
+    const snapshot = await service.taskSnapshot(process.cwd(), "ses_async", now, AbortSignal.timeout(1_000));
+    assert.equal(snapshot.successful, true);
+    assert.equal(snapshot.response, "all done");
+
+    permissions = [{ id: "per_1", sessionID: "ses_async" }, { id: "per_other", sessionID: "other" }];
+    questions = [{ id: "que_1", sessionID: "ses_async" }];
+    await service.resolvePendingRequests(process.cwd(), "ses_async", AbortSignal.timeout(1_000));
+    assert.deepEqual(resolvedRequests, ["/permission/per_1/reply", "/question/que_1/reject"]);
     await service.close();
   });
 });

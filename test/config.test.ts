@@ -18,6 +18,9 @@ describe("configuration", () => {
     assert.equal(config.taskTimeoutMs, 30 * 60 * 1_000);
     assert.equal(config.routingTimeoutMs, 2 * 60 * 1_000);
     assert.equal(config.cloneTimeoutMs, 5 * 60 * 1_000);
+    assert.equal(config.jobPollIntervalMs, 10_000);
+    assert.equal(config.jobContinueIntervalMs, 60_000);
+    assert.match(config.jobsDatabase, /jobs\.sqlite$/);
   });
 
   it("requires an allowlisted user or role", () => {

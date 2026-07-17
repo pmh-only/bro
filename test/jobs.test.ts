@@ -1,78 +1,73 @@
 import assert from "node:assert/strict";
-import { describe, it } from "vitest";
-import { JobQueue, type JobState } from "../src/jobs.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, it } from "vitest";
+import { JobStore } from "../src/jobs.js";
 
-async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  throw new Error("Timed out waiting for job state");
+const temporaryDirectories: string[] = [];
+const project = { alias: "example", directory: "/tmp/example" };
+
+function enqueue(store: JobStore, task: string) {
+  return store.enqueue({
+    project,
+    task,
+    requestedBy: "user-1",
+    channelId: "channel-1",
+    messageId: `message-${task}`,
+    guildId: "guild-1",
+  });
 }
 
-describe("project job queue", () => {
-  it("serializes jobs for one project and publishes queued cancellation", async () => {
-    const queue = new JobQueue();
-    const firstGate = Promise.withResolvers<void>();
-    const firstProject = { alias: "example", directory: "/tmp/example" };
-    const states: JobState[] = [];
-    let secondExecuted = false;
+afterEach(async () => {
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+});
 
-    const first = queue.enqueue({
-      project: firstProject,
-      task: "first",
-      requestedBy: "1",
-      execute: async () => {
-        await firstGate.promise;
-        return "first complete";
-      },
-      onChange: async () => undefined,
-    });
-    await waitFor(() => first.state === "running");
+describe("persistent project jobs", () => {
+  it("selects only one queued job per project and supports cancellation", () => {
+    const store = new JobStore(":memory:");
+    const first = enqueue(store, "first");
+    const second = enqueue(store, "second");
 
-    const second = queue.enqueue({
-      project: firstProject,
-      task: "second",
-      requestedBy: "1",
-      execute: async () => {
-        secondExecuted = true;
-        return "second complete";
-      },
-      onChange: async (job) => {
-        states.push(job.state);
-      },
-    });
+    assert.deepEqual(store.ready().map((job) => job.id), [first.id]);
+    first.state = "running";
+    first.startedAt = Date.now();
+    store.save(first);
+    assert.deepEqual(store.ready(), []);
 
-    assert.equal(second.state, "queued");
-    await queue.cancel(second.id);
-    assert.equal(second.state, "cancelled");
-    assert.deepEqual(states, ["cancelled"]);
-
-    firstGate.resolve();
-    await waitFor(() => first.state === "completed");
-    assert.equal(secondExecuted, false);
-    assert.deepEqual(queue.active(), []);
+    first.state = "completed";
+    first.finishedAt = Date.now();
+    store.save(first);
+    assert.deepEqual(store.ready().map((job) => job.id), [second.id]);
+    assert.equal(store.cancel(second.id)?.state, "cancelled");
+    assert.deepEqual(store.active(), []);
+    store.close();
   });
 
-  it("aborts a running job", async () => {
-    const queue = new JobQueue();
-    const project = { alias: "example", directory: "/tmp/example" };
-    const job = queue.enqueue({
-      project,
-      task: "long task",
-      requestedBy: "1",
-      execute: async (runningJob) =>
-        new Promise<string>((_resolve, reject) => {
-          runningJob.controller.signal.addEventListener("abort", () => reject(runningJob.controller.signal.reason), {
-            once: true,
-          });
-        }),
-      onChange: async () => undefined,
-    });
+  it("restores session and Discord message state after reopening", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "bro-jobs-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "jobs.sqlite");
+    const firstStore = new JobStore(path);
+    const job = enqueue(firstStore, "persisted");
+    job.state = "running";
+    job.startedAt = 1;
+    job.sessionId = "ses_persisted";
+    job.sessionUrl = "https://opencode.example/session/ses_persisted";
+    job.promptAttempts = 1;
+    job.lastPromptAt = Date.now();
+    firstStore.save(job);
+    firstStore.close();
 
-    await waitFor(() => job.state === "running");
-    await queue.cancel(job.id);
-    await waitFor(() => job.state === "cancelled");
-    assert.deepEqual(queue.active(), []);
+    const secondStore = new JobStore(path);
+    secondStore.resume();
+    const restored = secondStore.get(job.id);
+    assert.equal(restored?.state, "running");
+    assert.equal(restored?.sessionId, "ses_persisted");
+    assert.equal(restored?.channelId, "channel-1");
+    assert.equal(restored?.messageId, "message-persisted");
+    assert.equal(restored?.promptAttempts, 1);
+    assert.ok((restored?.startedAt ?? 0) > 1, "restart should not count container downtime against the task deadline");
+    secondStore.close();
   });
 });

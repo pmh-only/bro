@@ -51,6 +51,7 @@ Only the home directory is persistent storage.
 * The TypeScript test suites run on Vitest with `npm test`.
 * Provider request timeouts are disabled for the selected OpenCode model, so the bot's task deadline controls long jobs.
 * OpenCode API requests use a dedicated dispatcher without Node's five-minute response timeout.
+* Jobs and Discord status message IDs are stored in SQLite. A periodic poller restores unfinished work after container restarts and asks OpenCode to continue until it reports verified success.
 
 ## Pre-installed MCPs
 My favorite combination of MCPs:
