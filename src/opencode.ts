@@ -1,6 +1,12 @@
 import { createOpencodeClient, type FileDiff, type OpencodeClient, type Part, type Session } from "@opencode-ai/sdk";
+import { Agent } from "undici";
 import type { AppConfig } from "./config.js";
 import { intentSchema, type NaturalLanguageIntent, validateIntent } from "./intents.js";
+
+export const opencodeDispatcherOptions = {
+  headersTimeout: 0,
+  bodyTimeout: 0,
+} as const;
 
 export interface TaskResult {
   sessionId: string;
@@ -54,6 +60,7 @@ function errorMessage(error: unknown): string {
 
 export class OpenCodeService {
   private readonly headers: Record<string, string>;
+  private readonly dispatcher = new Agent(opencodeDispatcherOptions);
 
   constructor(private readonly config: AppConfig) {
     this.headers = config.opencodePassword
@@ -62,7 +69,7 @@ export class OpenCodeService {
   }
 
   async assertHealthy(): Promise<string> {
-    const response = await fetch(`${this.config.opencodeUrl}/global/health`, {
+    const response = await this.request(`${this.config.opencodeUrl}/global/health`, {
       headers: this.headers,
       signal: AbortSignal.timeout(5_000),
     });
@@ -70,6 +77,10 @@ export class OpenCodeService {
     const health = (await response.json()) as { healthy?: boolean; version?: string };
     if (!health.healthy) throw new Error("OpenCode server reported that it is unhealthy");
     return health.version ?? "unknown";
+  }
+
+  async close(): Promise<void> {
+    await this.dispatcher.close();
   }
 
   async interpretRequest(
@@ -83,6 +94,7 @@ export class OpenCodeService {
       baseUrl: this.config.opencodeUrl,
       directory: process.cwd(),
       headers: this.headers,
+      fetch: (request) => this.request(request),
       throwOnError: true,
     });
     let sessionId: string | undefined;
@@ -141,6 +153,7 @@ export class OpenCodeService {
       baseUrl: this.config.opencodeUrl,
       directory: options.directory,
       headers: this.headers,
+      fetch: (request) => this.request(request),
       throwOnError: true,
     });
     const eventAbort = new AbortController();
@@ -361,13 +374,17 @@ export class OpenCodeService {
   ): Promise<void> {
     const url = new URL(path, `${this.config.opencodeUrl}/`);
     url.searchParams.set("directory", directory);
-    const response = await fetch(url, {
+    const response = await this.request(url, {
       method: "POST",
       headers: { ...this.headers, ...(body ? { "Content-Type": "application/json" } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}),
       signal,
     });
     if (!response.ok) throw new Error(`OpenCode ${path} failed with HTTP ${response.status}`);
+  }
+
+  private request(input: string | URL | Request, init?: RequestInit): ReturnType<typeof fetch> {
+    return fetch(input, { ...init, dispatcher: this.dispatcher } as RequestInit);
   }
 
   private textResponse(parts: Part[]): string {

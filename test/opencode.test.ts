@@ -3,7 +3,7 @@ import { createServer, type ServerResponse } from "node:http";
 import { afterAll, beforeAll, beforeEach, describe, it } from "vitest";
 import type { Session } from "@opencode-ai/sdk";
 import { loadConfig } from "../src/config.js";
-import { OpenCodeService } from "../src/opencode.js";
+import { opencodeDispatcherOptions, OpenCodeService } from "../src/opencode.js";
 
 describe("OpenCode task lifecycle", () => {
   const eventResponses = new Set<ServerResponse>();
@@ -71,6 +71,10 @@ describe("OpenCode task lifecycle", () => {
   });
   let baseUrl = "";
 
+  it("disables Node fetch timeouts for long-running OpenCode responses", () => {
+    assert.deepEqual(opencodeDispatcherOptions, { headersTimeout: 0, bodyTimeout: 0 });
+  });
+
   beforeAll(async () => {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
@@ -120,6 +124,7 @@ describe("OpenCode task lifecycle", () => {
       `${baseUrl}/${Buffer.from(process.cwd()).toString("base64url")}/session/ses_test`,
     );
     assert.equal(createRequests, 1);
+    await service.close();
   });
 
   it("continues the latest project Discord session instead of creating one", async () => {
@@ -167,5 +172,6 @@ describe("OpenCode task lifecycle", () => {
       prompt.parts.find((part) => part.type === "text")?.text ?? "",
       /Co-authored-by: Bro, the bot <bro@pmh\.codes>/,
     );
+    await service.close();
   });
 });

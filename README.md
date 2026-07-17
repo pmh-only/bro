@@ -50,6 +50,7 @@ Only the home directory is persistent storage.
 * Every automated commit includes `Co-authored-by: Bro, the bot <bro@pmh.codes>`.
 * The TypeScript test suites run on Vitest with `npm test`.
 * Provider request timeouts are disabled for the selected OpenCode model, so the bot's task deadline controls long jobs.
+* OpenCode API requests use a dedicated dispatcher without Node's five-minute response timeout.
 
 ## Pre-installed MCPs
 My favorite combination of MCPs:
