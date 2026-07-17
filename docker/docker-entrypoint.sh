@@ -21,17 +21,18 @@ trap 'shutdown; exit 130' INT
 export OPENCODE_URL="${OPENCODE_URL:-http://127.0.0.1:${OPENCODE_PORT:-4096}}"
 export OPENCODE_USERNAME="${OPENCODE_USERNAME:-${OPENCODE_SERVER_USERNAME:-opencode}}"
 export OPENCODE_PASSWORD="${OPENCODE_PASSWORD:-${OPENCODE_SERVER_PASSWORD:-}}"
-# OpenCode providers otherwise stop a single model request after five minutes,
-# before the bot's configurable task deadline. This overlay also covers existing
-# persisted configs; an explicitly supplied overlay remains authoritative.
-if [[ -z "${OPENCODE_CONFIG_CONTENT:-}" ]]; then
-  export OPENCODE_CONFIG_CONTENT='{"provider":{"anthropic":{"options":{"timeout":false}},"openai":{"options":{"timeout":false}}}}'
-fi
 
 config_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/opencode"
 mkdir -p "$config_dir"
 if [[ ! -e "$config_dir/opencode.json" ]]; then
   install -m 600 /app/docker/opencode.default.json "$config_dir/opencode.json"
+fi
+
+# Provider requests otherwise stop after five minutes, before the bot's task
+# deadline. Derive the overlay from the selected and persisted providers while
+# preserving an explicitly supplied OPENCODE_CONFIG_CONTENT value.
+if [[ -z "${OPENCODE_CONFIG_CONTENT:-}" ]]; then
+  export OPENCODE_CONFIG_CONTENT="$(node /app/docker/opencode-provider-timeouts.mjs "$config_dir/opencode.json")"
 fi
 
 opencode web --hostname=0.0.0.0 --port="${OPENCODE_PORT:-4096}" &

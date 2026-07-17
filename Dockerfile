@@ -95,7 +95,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
-COPY docker/docker-entrypoint.sh docker/docker-healthcheck.sh ./docker/
+COPY docker/docker-entrypoint.sh docker/docker-healthcheck.sh docker/opencode-provider-timeouts.mjs ./docker/
 COPY docker/opencode.json ./docker/opencode.default.json
 COPY --chown=root:root --chmod=0440 docker/opencode.sudoers /etc/sudoers.d/opencode
 COPY docker/xdg-open /usr/local/bin/xdg-open
