@@ -3,7 +3,10 @@ import {
   ButtonBuilder,
   ButtonStyle,
   ContainerBuilder,
+  ModalBuilder,
   TextDisplayBuilder,
+  TextInputBuilder,
+  TextInputStyle,
 } from "discord.js";
 import type { Job } from "./jobs.js";
 
@@ -44,6 +47,11 @@ export function jobComponents(job: Job, body: string): ContainerBuilder[] {
     );
   }
   if (job.state === "queued" || job.state === "running") {
+    if (job.state === "running") {
+      buttons.push(
+        new ButtonBuilder().setCustomId(`job:prompt:${job.id}`).setLabel("Add instruction").setStyle(ButtonStyle.Primary),
+      );
+    }
     buttons.push(
       new ButtonBuilder().setCustomId(`job:cancel:${job.id}`).setLabel("Cancel job").setStyle(ButtonStyle.Danger),
     );
@@ -53,8 +61,23 @@ export function jobComponents(job: Job, body: string): ContainerBuilder[] {
   return cardComponents(title, body, { accentColor: colors[job.state], buttons });
 }
 
-export function parseJobButton(customId: string): { action: "refresh" | "cancel"; jobId: string } | undefined {
-  const match = /^job:(refresh|cancel):([a-f0-9]{8})$/.exec(customId);
+export function jobInstructionModal(jobId: string): ModalBuilder {
+  const input = new TextInputBuilder()
+    .setCustomId("instruction")
+    .setLabel("Additional instruction")
+    .setPlaceholder("Describe what OpenCode should change or do next")
+    .setStyle(TextInputStyle.Paragraph)
+    .setMinLength(1)
+    .setMaxLength(2_000)
+    .setRequired(true);
+  return new ModalBuilder()
+    .setCustomId(`job:prompt:${jobId}`)
+    .setTitle("Add job instruction")
+    .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
+}
+
+export function parseJobButton(customId: string): { action: "refresh" | "prompt" | "cancel"; jobId: string } | undefined {
+  const match = /^job:(refresh|prompt|cancel):([a-f0-9]{8})$/.exec(customId);
   if (!match) return undefined;
-  return { action: match[1] as "refresh" | "cancel", jobId: match[2]! };
+  return { action: match[1] as "refresh" | "prompt" | "cancel", jobId: match[2]! };
 }

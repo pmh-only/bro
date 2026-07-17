@@ -36,6 +36,13 @@ interface EnqueueOptions {
   guildId?: string;
 }
 
+export interface JobInstruction {
+  id: number;
+  jobId: string;
+  content: string;
+  createdAt: number;
+}
+
 const terminalStates = new Set<JobState>(["completed", "failed", "cancelled"]);
 
 export class JobStore {
@@ -68,6 +75,15 @@ export class JobStore {
         notified INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX IF NOT EXISTS jobs_state_created ON jobs(state, created_at);
+      CREATE TABLE IF NOT EXISTS job_instructions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        sent_at INTEGER,
+        FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS job_instructions_pending ON job_instructions(job_id, sent_at, created_at);
     `);
   }
 
@@ -145,6 +161,28 @@ export class JobStore {
     }
     this.save(job);
     return job;
+  }
+
+  enqueueInstruction(jobId: string, content: string): JobInstruction {
+    const createdAt = Date.now();
+    const result = this.database
+      .prepare("INSERT INTO job_instructions (job_id, content, created_at) VALUES (?, ?, ?)")
+      .run(jobId, content, createdAt);
+    return { id: Number(result.lastInsertRowid), jobId, content, createdAt };
+  }
+
+  pendingInstructions(jobId: string): JobInstruction[] {
+    return this.database
+      .prepare("SELECT id, job_id, content, created_at FROM job_instructions WHERE job_id = ? AND sent_at IS NULL ORDER BY created_at, id")
+      .all(jobId)
+      .map((value) => {
+        const row = value as Record<string, string | number>;
+        return { id: Number(row.id), jobId: String(row.job_id), content: String(row.content), createdAt: Number(row.created_at) };
+      });
+  }
+
+  markInstructionSent(id: number): void {
+    this.database.prepare("UPDATE job_instructions SET sent_at = ? WHERE id = ?").run(Date.now(), id);
   }
 
   close(): void {

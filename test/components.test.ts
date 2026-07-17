@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import { ButtonStyle, ComponentType } from "discord.js";
-import { cardComponents, jobComponents, parseJobButton } from "../src/components.js";
+import { cardComponents, jobComponents, jobInstructionModal, parseJobButton } from "../src/components.js";
 import type { Job, JobState } from "../src/jobs.js";
 
 function job(state: JobState): Job {
@@ -44,7 +44,7 @@ describe("Discord Components v2", () => {
       runningButtons.map((button) =>
         button.type === ComponentType.Button ? ("custom_id" in button ? button.custom_id : button.style) : undefined,
       ),
-      [ButtonStyle.Link, "job:refresh:abcd1234", "job:cancel:abcd1234"],
+      [ButtonStyle.Link, "job:refresh:abcd1234", "job:prompt:abcd1234", "job:cancel:abcd1234"],
     );
     assert.deepEqual(
       completedButtons.map((button) => (button.type === ComponentType.Button ? button.style : undefined)),
@@ -54,7 +54,18 @@ describe("Discord Components v2", () => {
 
   it("parses only supported job button identifiers", () => {
     assert.deepEqual(parseJobButton("job:cancel:abcd1234"), { action: "cancel", jobId: "abcd1234" });
+    assert.deepEqual(parseJobButton("job:prompt:abcd1234"), { action: "prompt", jobId: "abcd1234" });
     assert.equal(parseJobButton("job:delete:abcd1234"), undefined);
     assert.equal(parseJobButton("job:cancel:not-a-job"), undefined);
+  });
+
+  it("builds a multiline instruction modal", () => {
+    const modal = jobInstructionModal("abcd1234").toJSON();
+    const row = modal.components[0];
+    const input = row?.type === ComponentType.ActionRow ? row.components[0] : undefined;
+
+    assert.equal(modal.custom_id, "job:prompt:abcd1234");
+    assert.equal(input?.type, ComponentType.TextInput);
+    assert.equal(input && "custom_id" in input ? input.custom_id : undefined, "instruction");
   });
 });

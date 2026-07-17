@@ -159,6 +159,8 @@ describe("OpenCode task lifecycle", () => {
     assert.equal(createRequests, 0);
     await service.submitTask(process.cwd(), session.sessionId, "finish it", false, AbortSignal.timeout(1_000));
     assert.match(asyncPromptBodies[0] ?? "", /BRO_JOB_SUCCESS/);
+    await service.submitInstruction(process.cwd(), session.sessionId, "use the new API", AbortSignal.timeout(1_000));
+    assert.match(asyncPromptBodies[1] ?? "", /Additional instruction.*use the new API.*BRO_JOB_SUCCESS/s);
 
     sessionStatuses = { ses_async: { type: "idle" } };
     sessionMessages = [{
@@ -168,7 +170,7 @@ describe("OpenCode task lifecycle", () => {
     assert.equal((await service.taskSnapshot(process.cwd(), "ses_async", now, AbortSignal.timeout(1_000))).successful, false);
 
     await service.submitTask(process.cwd(), "ses_async", "finish it", true, AbortSignal.timeout(1_000));
-    assert.match(asyncPromptBodies[1] ?? "", /still incomplete/);
+    assert.match(asyncPromptBodies[2] ?? "", /still incomplete/);
     sessionMessages = [{
       info: { id: "msg_2", sessionID: "ses_async", role: "assistant", parentID: "user_2", time: { created: now + 2 } },
       parts: [{ type: "text", text: "all done\nBRO_JOB_SUCCESS" }],

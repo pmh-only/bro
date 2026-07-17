@@ -9,7 +9,7 @@ import {
   type Message,
 } from "discord.js";
 import { hasBotMention, stripBotMention } from "./commands.js";
-import { cardComponents, jobComponents, parseJobButton } from "./components.js";
+import { cardComponents, jobComponents, jobInstructionModal, parseJobButton } from "./components.js";
 import { loadConfig } from "./config.js";
 import { loginWithRetry } from "./discord.js";
 import { type Job, JobStore } from "./jobs.js";
@@ -172,6 +172,18 @@ async function main(): Promise<void> {
       return;
     }
 
+    for (const instruction of jobs.pendingInstructions(job.id)) {
+      job.lastPromptAt = Date.now();
+      jobs.save(job);
+      await opencode.submitInstruction(
+        job.project.directory,
+        job.sessionId,
+        instruction.content,
+        AbortSignal.timeout(30_000),
+      );
+      jobs.markInstructionSent(instruction.id);
+    }
+
     await opencode.resolvePendingRequests(
       job.project.directory,
       job.sessionId,
@@ -186,6 +198,7 @@ async function main(): Promise<void> {
     );
     if (snapshot.state === "busy") return;
     if (snapshot.successful) {
+      if (jobs.pendingInstructions(job.id).length) return;
       const result = formatResult({
         sessionId: job.sessionId,
         webUrl: job.sessionUrl ?? "",
@@ -398,25 +411,49 @@ async function main(): Promise<void> {
   };
 
   const handleInteraction = (interaction: Interaction): void => {
-    if (!interaction.isButton()) return;
-    const button = parseJobButton(interaction.customId);
-    if (!button) return;
+    if (!interaction.isButton() && !interaction.isModalSubmit()) return;
+    const control = parseJobButton(interaction.customId);
+    if (!control) return;
 
     void (async () => {
       const roles = interaction.inCachedGuild() ? roleIds(interaction.member) : new Set<string>();
-      if (!authorized(interaction.guildId, interaction.channelId, interaction.user.id, roles)) {
+      if (!interaction.channelId || !authorized(interaction.guildId, interaction.channelId, interaction.user.id, roles)) {
         await interaction.reply({ content: "You are not authorized to control OpenCode jobs.", flags: MessageFlags.Ephemeral });
         return;
       }
 
-      const job = jobs.get(button.jobId);
+      const job = jobs.get(control.jobId);
       if (!job) {
-        await interaction.reply({ content: `Job \`${button.jobId}\` was not found.`, flags: MessageFlags.Ephemeral });
+        await interaction.reply({ content: `Job \`${control.jobId}\` was not found.`, flags: MessageFlags.Ephemeral });
         return;
       }
 
-      if (button.action === "refresh") {
+      if (interaction.isModalSubmit()) {
+        if (control.action !== "prompt" || job.state !== "running" || !job.sessionId) {
+          await interaction.reply({ content: "This job is no longer accepting instructions.", flags: MessageFlags.Ephemeral });
+          return;
+        }
+        const instruction = interaction.fields.getTextInputValue("instruction").trim();
+        if (!instruction) {
+          await interaction.reply({ content: "Instruction cannot be empty.", flags: MessageFlags.Ephemeral });
+          return;
+        }
+        jobs.enqueueInstruction(job.id, instruction);
+        await interaction.reply({ content: "Instruction queued for OpenCode.", flags: MessageFlags.Ephemeral });
+        void pollJobs();
+        return;
+      }
+
+      if (control.action === "refresh") {
         await interaction.update({ components: jobComponents(job, formatJob(job)), allowedMentions: { parse: [] } });
+        return;
+      }
+      if (control.action === "prompt") {
+        if (job.state !== "running" || !job.sessionId) {
+          await interaction.reply({ content: "This job is not currently accepting instructions.", flags: MessageFlags.Ephemeral });
+          return;
+        }
+        await interaction.showModal(jobInstructionModal(job.id));
         return;
       }
 

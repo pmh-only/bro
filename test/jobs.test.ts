@@ -57,6 +57,7 @@ describe("persistent project jobs", () => {
     job.promptAttempts = 1;
     job.lastPromptAt = Date.now();
     firstStore.save(job);
+    const instruction = firstStore.enqueueInstruction(job.id, "also update the docs");
     firstStore.close();
 
     const secondStore = new JobStore(path);
@@ -68,6 +69,11 @@ describe("persistent project jobs", () => {
     assert.equal(restored?.messageId, "message-persisted");
     assert.equal(restored?.promptAttempts, 1);
     assert.ok((restored?.startedAt ?? 0) > 1, "restart should not count container downtime against the task deadline");
+    assert.deepEqual(secondStore.pendingInstructions(job.id).map(({ id, content }) => ({ id, content })), [
+      { id: instruction.id, content: "also update the docs" },
+    ]);
+    secondStore.markInstructionSent(instruction.id);
+    assert.deepEqual(secondStore.pendingInstructions(job.id), []);
     secondStore.close();
   });
 });
