@@ -5,11 +5,13 @@ import {
   GatewayIntentBits,
   MessageFlags,
   type GuildMember,
+  type Interaction,
   type Message,
 } from "discord.js";
 import { hasBotMention, stripBotMention } from "./commands.js";
 import { cardComponents, jobComponents, parseJobButton } from "./components.js";
 import { loadConfig } from "./config.js";
+import { loginWithRetry } from "./discord.js";
 import { type Job, JobQueue } from "./jobs.js";
 import { terminalJobNotice } from "./notices.js";
 import { OpenCodeService, type TaskResult } from "./opencode.js";
@@ -73,9 +75,7 @@ async function main(): Promise<void> {
   const jobs = new JobQueue();
   const requestControllers = new Set<AbortController>();
 
-  const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
-  });
+  let client: Client;
 
   const reply = (message: Message, content: string) =>
     message.reply({ content: truncate(content, DISCORD_LIMIT), allowedMentions: { parse: [], repliedUser: false } });
@@ -111,10 +111,6 @@ async function main(): Promise<void> {
     if (config.allowedUserIds.has(userId)) return true;
     return [...roles].some((id) => config.allowedRoleIds.has(id));
   };
-
-  client.once(Events.ClientReady, (readyClient) => {
-    console.log(`Discord bot ${readyClient.user.tag} connected to OpenCode ${version}`);
-  });
 
   let shuttingDown = false;
   const handleMessage = async (message: Message): Promise<void> => {
@@ -277,7 +273,7 @@ async function main(): Promise<void> {
     }
   };
 
-  client.on(Events.MessageCreate, (message) => {
+  const handleMessageCreate = (message: Message): void => {
     void handleMessage(message).catch(async (error) => {
       console.error("Discord message handler failed", error);
       try {
@@ -286,9 +282,9 @@ async function main(): Promise<void> {
         console.error("Unable to report Discord request failure", replyError);
       }
     });
-  });
+  };
 
-  client.on(Events.InteractionCreate, (interaction) => {
+  const handleInteraction = (interaction: Interaction): void => {
     if (!interaction.isButton()) return;
     const button = parseJobButton(interaction.customId);
     if (!button) return;
@@ -330,10 +326,26 @@ async function main(): Promise<void> {
         console.error("Unable to report Discord job interaction failure", replyError);
       }
     });
-  });
+  };
 
-  client.on(Events.Error, (error) => console.error("Discord client error", error));
-  await client.login(config.discordToken);
+  const createClient = (): Client => {
+    const created = new Client({
+      intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+    });
+    created.once(Events.ClientReady, (readyClient) => {
+      console.log(`Discord bot ${readyClient.user.tag} connected to OpenCode ${version}`);
+    });
+    created.on(Events.MessageCreate, handleMessageCreate);
+    created.on(Events.InteractionCreate, handleInteraction);
+    created.on(Events.Error, (error) => console.error("Discord client error", error));
+    return created;
+  };
+
+  client = await loginWithRetry(createClient, config.discordToken, {
+    onRetry: (error, delayMs) => {
+      console.error(`Discord login failed; retrying in ${Math.round(delayMs / 1_000)} seconds`, error);
+    },
+  });
 
   const shutdown = async () => {
     if (shuttingDown) return;
