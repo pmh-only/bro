@@ -56,6 +56,7 @@ describe("persistent project jobs", () => {
     job.sessionId = "ses_persisted";
     job.sessionUrl = "https://opencode.example/session/ses_persisted";
     job.baseCommit = "0123456789abcdef";
+    job.progress = "Implementing persistence";
     job.promptAttempts = 1;
     job.lastPromptAt = Date.now();
     firstStore.save(job);
@@ -71,6 +72,7 @@ describe("persistent project jobs", () => {
     assert.equal(restored?.messageId, "message-persisted");
     assert.equal(restored?.promptAttempts, 1);
     assert.equal(restored?.baseCommit, "0123456789abcdef");
+    assert.equal(restored?.progress, "Implementing persistence");
     assert.ok((restored?.startedAt ?? 0) > 1, "restart should not count container downtime against the task deadline");
     assert.deepEqual(secondStore.pendingInstructions(job.id).map(({ id, content }) => ({ id, content })), [
       { id: instruction.id, content: "also update the docs" },
@@ -87,13 +89,16 @@ describe("persistent project jobs", () => {
     new JobStore(path).close();
     const oldDatabase = new DatabaseSync(path);
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN base_commit");
+    oldDatabase.exec("ALTER TABLE jobs DROP COLUMN progress");
     oldDatabase.close();
 
     const migrated = new JobStore(path);
     const job = enqueue(migrated, "migrated");
     job.baseCommit = "abcdef";
+    job.progress = "Migrated progress";
     migrated.save(job);
     assert.equal(migrated.get(job.id)?.baseCommit, "abcdef");
+    assert.equal(migrated.get(job.id)?.progress, "Migrated progress");
     migrated.close();
   });
 });

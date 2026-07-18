@@ -1,4 +1,4 @@
-import { createOpencodeClient, type FileDiff, type OpencodeClient, type Part, type Session } from "@opencode-ai/sdk";
+import { createOpencodeClient, type FileDiff, type OpencodeClient, type Part, type Session, type Todo } from "@opencode-ai/sdk";
 import {
   Agent,
   fetch as undiciFetch,
@@ -30,11 +30,36 @@ export interface TaskSnapshot {
   state: "busy" | "idle";
   successful: boolean;
   response: string;
+  progress?: string;
   error?: string;
   diffs: FileDiff[];
 }
 
 const successMarker = "BRO_JOB_SUCCESS";
+
+function brief(value: string, maximum = 400): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length <= maximum ? normalized : `${normalized.slice(0, maximum - 3).trimEnd()}...`;
+}
+
+function progressReport(todos: Todo[], parts: Part[]): string | undefined {
+  if (todos.length) {
+    const current = todos.find((todo) => todo.status === "in_progress") ?? todos.find((todo) => todo.status === "pending");
+    const completed = todos.filter((todo) => todo.status === "completed").length;
+    const activity = current ? `Working on: ${brief(current.content, 300)}` : "Finalizing completed steps.";
+    return `${activity}\nPlan: ${completed}/${todos.length} steps completed`;
+  }
+  const tool = [...parts].reverse().find((part): part is Extract<Part, { type: "tool" }> =>
+    part.type === "tool" && (part.state.status === "running" || part.state.status === "pending"));
+  if (tool) return `Running ${brief(tool.state.status === "running" ? tool.state.title ?? tool.tool : tool.tool, 300)}`;
+  const text = parts
+    .filter((part): part is Extract<Part, { type: "text" }> => part.type === "text" && !part.ignored)
+    .map((part) => part.text)
+    .filter(Boolean)
+    .at(-1);
+  if (text) return brief(text);
+  return undefined;
+}
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -185,18 +210,21 @@ export class OpenCodeService {
 
   async taskSnapshot(directory: string, sessionId: string, after: number, signal: AbortSignal): Promise<TaskSnapshot> {
     const client = this.client(directory);
-    const statuses = await client.session.status({ query: { directory }, signal });
+    const [statuses, messages, todos] = await Promise.all([
+      client.session.status({ query: { directory }, signal }),
+      client.session.messages({ path: { id: sessionId }, query: { directory, limit: 20 }, signal }),
+      client.session.todo({ path: { id: sessionId }, query: { directory }, signal }),
+    ]);
     const status = statuses.data?.[sessionId];
-    if (status && status.type !== "idle") {
-      return { state: "busy", successful: false, response: "", diffs: [] };
-    }
-
-    const messages = await client.session.messages({ path: { id: sessionId }, query: { directory, limit: 20 }, signal });
     const assistant = [...(messages.data ?? [])]
       .reverse()
       .find((message) => message.info.role === "assistant" && message.info.time.created >= after);
+    const progress = progressReport(todos.data ?? [], assistant?.parts ?? []);
+    if (status && status.type !== "idle") {
+      return { state: "busy", successful: false, response: "", ...(progress ? { progress } : {}), diffs: [] };
+    }
     if (!assistant || assistant.info.role !== "assistant") {
-      return { state: "idle", successful: false, response: "", diffs: [] };
+      return { state: "idle", successful: false, response: "", ...(progress ? { progress } : {}), diffs: [] };
     }
     const response = this.textResponse(assistant.parts);
     const successful = response.includes(successMarker) && !assistant.info.error;
@@ -209,6 +237,7 @@ export class OpenCodeService {
       state: "idle",
       successful,
       response: response.replace(successMarker, "").trim(),
+      ...(progress ? { progress } : {}),
       ...(assistant.info.error ? { error: errorMessage(assistant.info.error.data) } : {}),
       diffs,
     };

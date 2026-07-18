@@ -11,6 +11,7 @@ describe("OpenCode task lifecycle", () => {
   let asyncPromptBodies: string[] = [];
   let sessionStatuses: Record<string, { type: "idle" | "busy" }> = {};
   let sessionMessages: unknown[] = [];
+  let sessionTodos: unknown[] = [];
   let permissions: unknown[] = [];
   let questions: unknown[] = [];
   let resolvedRequests: string[] = [];
@@ -78,6 +79,11 @@ describe("OpenCode task lifecycle", () => {
       response.end(JSON.stringify(sessionMessages));
       return;
     }
+    if (request.method === "GET" && path.endsWith("/todo")) {
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify(sessionTodos));
+      return;
+    }
     if (request.method === "GET" && path.endsWith("/diff")) {
       response.setHeader("Content-Type", "application/json");
       response.end("[]");
@@ -110,6 +116,7 @@ describe("OpenCode task lifecycle", () => {
     asyncPromptBodies = [];
     sessionStatuses = {};
     sessionMessages = [];
+    sessionTodos = [];
     permissions = [];
     questions = [];
     resolvedRequests = [];
@@ -162,7 +169,16 @@ describe("OpenCode task lifecycle", () => {
     await service.submitInstruction(process.cwd(), session.sessionId, "use the new API", AbortSignal.timeout(1_000));
     assert.match(asyncPromptBodies[1] ?? "", /Additional instruction.*use the new API.*BRO_JOB_SUCCESS/s);
 
+    sessionStatuses = { ses_async: { type: "busy" } };
+    sessionTodos = [
+      { id: "todo_1", content: "Inspect existing behavior", status: "completed", priority: "high" },
+      { id: "todo_2", content: "Implement the fix", status: "in_progress", priority: "high" },
+    ];
+    const busy = await service.taskSnapshot(process.cwd(), "ses_async", now, AbortSignal.timeout(1_000));
+    assert.equal(busy.progress, "Working on: Implement the fix\nPlan: 1/2 steps completed");
+
     sessionStatuses = { ses_async: { type: "idle" } };
+    sessionTodos = [];
     sessionMessages = [{
       info: { id: "msg_1", sessionID: "ses_async", role: "assistant", parentID: "user_1", time: { created: now + 1 } },
       parts: [{ type: "text", text: "not finished" }],

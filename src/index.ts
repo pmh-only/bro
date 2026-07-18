@@ -43,7 +43,8 @@ function formatJob(job: Job): string {
   if (job.state === "running") {
     const session = job.sessionId ? `\nOpenCode session: \`${job.sessionId}\`` : "";
     const attempts = job.promptAttempts > 1 ? `\nContinuation attempts: ${job.promptAttempts - 1}` : "";
-    return `${heading}${session}${attempts}`;
+    const progress = job.progress ? `\n\n**Progress**\n${truncate(job.progress, 500)}` : "";
+    return `${heading}${session}${attempts}${progress}`;
   }
   if (job.state === "cancelling") return `${heading}\nStopping the OpenCode session...`;
   if (job.state === "completed") return truncate(`${heading}${elapsed ? ` in ${elapsed}` : ""}\n${job.result || "OpenCode completed without a text response."}`, DISCORD_LIMIT);
@@ -150,6 +151,7 @@ async function main(): Promise<void> {
   const finishJob = async (job: Job, state: "completed" | "failed" | "cancelled", result?: string, error?: string) => {
     job.state = state;
     job.finishedAt = Date.now();
+    delete job.progress;
     if (result !== undefined) job.result = result;
     if (error !== undefined) job.error = error;
     jobs.save(job);
@@ -179,6 +181,7 @@ async function main(): Promise<void> {
 
     for (const instruction of jobs.pendingInstructions(job.id)) {
       job.lastPromptAt = Date.now();
+      job.progress = "Applying an additional instruction.";
       jobs.save(job);
       await opencode.submitInstruction(
         job.project.directory,
@@ -201,6 +204,11 @@ async function main(): Promise<void> {
       job.lastPromptAt,
       AbortSignal.timeout(config.jobPollIntervalMs),
     );
+    if (snapshot.progress && snapshot.progress !== job.progress) {
+      job.progress = snapshot.progress;
+      jobs.save(job);
+      await publishJob(job);
+    }
     if (snapshot.state === "busy") return;
     if (snapshot.successful) {
       if (jobs.pendingInstructions(job.id).length) return;
@@ -226,6 +234,7 @@ async function main(): Promise<void> {
 
     job.promptAttempts += 1;
     job.lastPromptAt = Date.now();
+    job.progress = "Continuing unfinished work.";
     if (snapshot.error) job.error = snapshot.error;
     jobs.save(job);
     await opencode.submitTask(job.project.directory, job.sessionId, job.task, true, AbortSignal.timeout(30_000));
@@ -251,6 +260,7 @@ async function main(): Promise<void> {
     job.sessionUrl = session.webUrl;
     job.promptAttempts += 1;
     job.lastPromptAt = Date.now();
+    job.progress = "Starting OpenCode task.";
     jobs.save(job);
     await publishJob(job);
     await opencode.submitTask(job.project.directory, job.sessionId, job.task, false, AbortSignal.timeout(30_000));
