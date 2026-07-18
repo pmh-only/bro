@@ -2,7 +2,8 @@
 set -eu
 
 opencode_url="${OPENCODE_URL:-http://127.0.0.1:${OPENCODE_PORT:-4096}}/global/health"
-code_server_url="http://127.0.0.1:${CODE_SERVER_PORT:-8080}/healthz"
+code_server_url="http://127.0.0.1:${CODE_SERVER_PORT:-8081}/healthz"
+thread_server_url="http://127.0.0.1:${WEB_PORT:-8080}/healthz"
 username="${OPENCODE_USERNAME:-${OPENCODE_SERVER_USERNAME:-opencode}}"
 password="${OPENCODE_PASSWORD:-${OPENCODE_SERVER_PASSWORD:-}}"
 
@@ -12,4 +13,10 @@ else
   curl --connect-timeout 1 --max-time 4 --fail --silent --show-error "$opencode_url" >/dev/null
 fi
 
-exec curl --connect-timeout 1 --max-time 4 --fail --silent --show-error "$code_server_url"
+curl --connect-timeout 1 --max-time 4 --fail --silent --show-error "$code_server_url" >/dev/null
+
+if [ "${CHECK_THREAD_SERVER:-true}" = "true" ]; then
+  exec curl --connect-timeout 1 --max-time 4 --fail --silent --show-error "$thread_server_url"
+fi
+
+exit 0

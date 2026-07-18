@@ -39,7 +39,8 @@ ENV NODE_ENV=production \
     PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
     OPENCODE_PORT=4096 \
     OPENCODE_URL=http://127.0.0.1:4096 \
-    CODE_SERVER_PORT=8080 \
+    WEB_PORT=8080 \
+    CODE_SERVER_PORT=8081 \
     PROJECTS_FILE=/home/opencode/data/projects.json \
     PROJECTS_ROOT=/home/opencode/workspace
 
@@ -122,7 +123,7 @@ RUN chmod +x /app/docker/docker-entrypoint.sh /app/docker/docker-healthcheck.sh 
     && chown -R opencode:opencode /home/opencode \
     && chmod -R a+rX "${PLAYWRIGHT_BROWSERS_PATH}"
 
-EXPOSE 4096 8080
+EXPOSE 4096 8080 8081
 
 VOLUME ["/home/opencode"]
 

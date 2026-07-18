@@ -17,6 +17,7 @@ import { type Job, JobStore } from "./jobs.js";
 import { terminalJobNotice } from "./notices.js";
 import { OpenCodeService, type TaskResult } from "./opencode.js";
 import { ProjectRegistry } from "./projects.js";
+import { closeThreadServer, startThreadServer } from "./web.js";
 
 const DISCORD_LIMIT = 2_000;
 
@@ -84,6 +85,7 @@ async function main(): Promise<void> {
   const requestControllers = new Set<AbortController>();
 
   let client: Client;
+  let threadServer: Awaited<ReturnType<typeof startThreadServer>> | undefined;
 
   const reply = (message: Message, content: string) =>
     message.reply({ content: truncate(content, DISCORD_LIMIT), allowedMentions: { parse: [], repliedUser: false } });
@@ -521,11 +523,20 @@ async function main(): Promise<void> {
     return created;
   };
 
-  client = await loginWithRetry(createClient, config.discordToken, {
-    onRetry: (error, delayMs) => {
-      console.error(`Discord login failed; retrying in ${Math.round(delayMs / 1_000)} seconds`, error);
-    },
-  });
+  threadServer = await startThreadServer(jobs, config.webPort);
+  console.log(`Project thread server listening on port ${config.webPort}`);
+  try {
+    client = await loginWithRetry(createClient, config.discordToken, {
+      onRetry: (error, delayMs) => {
+        console.error(`Discord login failed; retrying in ${Math.round(delayMs / 1_000)} seconds`, error);
+      },
+    });
+  } catch (error) {
+    await closeThreadServer(threadServer);
+    jobs.close();
+    await opencode.close();
+    throw error;
+  }
   void Promise.all(jobs.active().map((job) => publishJob(job))).then(() => pollJobs());
   pollTimer = setInterval(() => void pollJobs(), config.jobPollIntervalMs);
   pollTimer.unref();
@@ -536,6 +547,7 @@ async function main(): Promise<void> {
     if (pollTimer) clearInterval(pollTimer);
     for (const controller of requestControllers) controller.abort(new Error("Bot is shutting down"));
     await polling;
+    if (threadServer) await closeThreadServer(threadServer);
     jobs.close();
     await opencode.close();
     client.destroy();

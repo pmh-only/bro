@@ -26,6 +26,21 @@ describe("Docker OpenCode configuration", () => {
     assert.match(entrypoint, /DOCKER_HOST="unix:\/\/\$docker_socket"/);
   });
 
+  it("serves project threads on 8080 and code-server on 8081", async () => {
+    const [dockerfile, entrypoint, healthcheck] = await Promise.all([
+      readFile("Dockerfile", "utf8"),
+      readFile("docker/docker-entrypoint.sh", "utf8"),
+      readFile("docker/docker-healthcheck.sh", "utf8"),
+    ]);
+
+    assert.match(dockerfile, /WEB_PORT=8080/);
+    assert.match(dockerfile, /CODE_SERVER_PORT=8081/);
+    assert.match(dockerfile, /EXPOSE 4096 8080 8081/);
+    assert.match(entrypoint, /CODE_SERVER_PORT:-8081/);
+    assert.match(healthcheck, /WEB_PORT:-8080/);
+    assert.match(healthcheck, /CHECK_THREAD_SERVER:-true/);
+  });
+
   it("disables the five-minute provider timeout for new and persisted configs", async () => {
     const config = JSON.parse(await readFile("docker/opencode.json", "utf8")) as {
       provider?: Record<string, { options?: { timeout?: number | false } }>;

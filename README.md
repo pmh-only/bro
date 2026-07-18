@@ -21,7 +21,7 @@ While a job is running, use **Add instruction** to queue a multiline prompt from
 ### 1. Run the all-in-one container
 Run the following Docker command:
 ```sh
-docker run -itp 8080:8080 -p 4096:4096 \
+docker run -it -p 8080:8080 -p 8081:8081 -p 4096:4096 \
   -e DISCORD_TOKEN=... \
   -e DISCORD_ALLOWED_USER_IDS=... \
   -v ./data:/home/opencode \
@@ -35,7 +35,8 @@ docker run -itp 8080:8080 -p 4096:4096 \
 
 ### 3. Configure the development environment
 Only the home directory is persistent storage.
-* Open the `code-server` UI at http://localhost:8080
+* Browse project request/response threads at http://localhost:8080. The UI is read-only but contains job content, so expose it only through your authentication proxy or private network.
+* Open the `code-server` UI at http://localhost:8081.
 * [IMPORTANT] Log in with your git credentials and make them persistent.
 * Configure anything else you need in this environment (e.g., SSH keys, GPG signing enforcement).
 

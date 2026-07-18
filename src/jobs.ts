@@ -145,6 +145,14 @@ export class JobStore {
       .map((row) => this.row(row)!);
   }
 
+  history(limit = 500): Job[] {
+    return this.database
+      .prepare("SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?")
+      .all(limit)
+      .map((row) => this.row(row)!)
+      .reverse();
+  }
+
   resume(): void {
     this.database.prepare("UPDATE jobs SET started_at = ? WHERE state = 'running'").run(Date.now());
   }

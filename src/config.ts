@@ -19,6 +19,7 @@ export interface AppConfig {
   cloneTimeoutMs: number;
   jobPollIntervalMs: number;
   jobContinueIntervalMs: number;
+  webPort: number;
   jobsDatabase: string;
   projectsFile: string;
   projectsRoot: string;
@@ -106,6 +107,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     cloneTimeoutMs: positiveInteger(env.GIT_CLONE_TIMEOUT_MS, 5 * 60 * 1_000, "GIT_CLONE_TIMEOUT_MS"),
     jobPollIntervalMs: positiveInteger(env.JOB_POLL_INTERVAL_MS, 10_000, "JOB_POLL_INTERVAL_MS"),
     jobContinueIntervalMs: positiveInteger(env.JOB_CONTINUE_INTERVAL_MS, 60_000, "JOB_CONTINUE_INTERVAL_MS"),
+    webPort: positiveInteger(env.WEB_PORT, 8_080, "WEB_PORT"),
     jobsDatabase: resolve(env.JOBS_DATABASE?.trim() || join(dirname(projectsFile), "jobs.sqlite")),
     projectsFile,
     projectsRoot: resolve(env.PROJECTS_ROOT?.trim() || "projects"),

@@ -20,6 +20,7 @@ describe("configuration", () => {
     assert.equal(config.cloneTimeoutMs, 5 * 60 * 1_000);
     assert.equal(config.jobPollIntervalMs, 10_000);
     assert.equal(config.jobContinueIntervalMs, 60_000);
+    assert.equal(config.webPort, 8_080);
     assert.match(config.jobsDatabase, /jobs\.sqlite$/);
   });
 

@@ -52,13 +52,13 @@ opencode_pid=$!
 
 NODE_ENV=production code-server \
   --auth none \
-  --bind-addr "0.0.0.0:${CODE_SERVER_PORT:-8080}" \
+  --bind-addr "0.0.0.0:${CODE_SERVER_PORT:-8081}" \
   --disable-telemetry \
   "$PROJECTS_ROOT" &
 code_server_pid=$!
 
 for _ in $(seq 1 90); do
-  if /app/docker/docker-healthcheck.sh >/dev/null 2>&1; then
+  if CHECK_THREAD_SERVER=false /app/docker/docker-healthcheck.sh >/dev/null 2>&1; then
     break
   fi
   if ! kill -0 "$opencode_pid" 2>/dev/null; then
@@ -72,7 +72,7 @@ for _ in $(seq 1 90); do
   sleep 1
 done
 
-if ! /app/docker/docker-healthcheck.sh >/dev/null 2>&1; then
+if ! CHECK_THREAD_SERVER=false /app/docker/docker-healthcheck.sh >/dev/null 2>&1; then
   echo "OpenCode and code-server did not become healthy within 90 seconds" >&2
   shutdown
   exit 1
