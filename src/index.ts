@@ -101,7 +101,7 @@ async function main(): Promise<void> {
     message.edit({ components: cardComponents(title, body), allowedMentions: { parse: [] } });
 
   const editJob = (message: Message, job: Job) =>
-    message.edit({ components: jobComponents(job, formatJob(job)), allowedMentions: { parse: [] } });
+    message.edit({ components: jobComponents(job, formatJob(job), config.codeServerPublicUrl), allowedMentions: { parse: [] } });
 
   const publishJob = async (job: Job): Promise<void> => {
     try {
@@ -477,7 +477,7 @@ async function main(): Promise<void> {
       }
 
       if (control.action === "refresh") {
-        await interaction.update({ components: jobComponents(job, formatJob(job)), allowedMentions: { parse: [] } });
+        await interaction.update({ components: jobComponents(job, formatJob(job), config.codeServerPublicUrl), allowedMentions: { parse: [] } });
         return;
       }
       if (control.action === "prompt") {
@@ -493,7 +493,7 @@ async function main(): Promise<void> {
       jobs.cancel(job.id);
       const current = jobs.get(job.id);
       if (current) {
-        await interaction.message.edit({ components: jobComponents(current, formatJob(current)), allowedMentions: { parse: [] } });
+        await interaction.message.edit({ components: jobComponents(current, formatJob(current), config.codeServerPublicUrl), allowedMentions: { parse: [] } });
       }
     })().catch(async (error) => {
       console.error("Discord job interaction failed", error);

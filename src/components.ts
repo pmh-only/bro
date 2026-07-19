@@ -36,10 +36,17 @@ export function cardComponents(title: string, body: string, options: CardOptions
   return [container];
 }
 
-export function jobComponents(job: Job, body: string): ContainerBuilder[] {
+export function jobComponents(job: Job, body: string, codeServerPublicUrl: string): ContainerBuilder[] {
   const buttons: ButtonBuilder[] = [];
   if (job.sessionUrl) {
     buttons.push(new ButtonBuilder().setLabel("Open in OpenCode").setStyle(ButtonStyle.Link).setURL(job.sessionUrl));
+  }
+  if (job.state === "running") {
+    const codeServerUrl = new URL(codeServerPublicUrl);
+    codeServerUrl.searchParams.set("folder", job.project.directory);
+    buttons.push(
+      new ButtonBuilder().setLabel("Open in code-server").setStyle(ButtonStyle.Link).setURL(codeServerUrl.toString()),
+    );
   }
   if (job.state === "queued" || job.state === "running" || job.state === "cancelling") {
     buttons.push(

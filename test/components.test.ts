@@ -31,8 +31,8 @@ describe("Discord Components v2", () => {
   });
 
   it("adds job actions appropriate for the current state", () => {
-    const running = jobComponents(job("running"), "Job details")[0]!.toJSON();
-    const completed = jobComponents(job("completed"), "Job details")[0]!.toJSON();
+    const running = jobComponents(job("running"), "Job details", "https://code.example/base")[0]!.toJSON();
+    const completed = jobComponents(job("completed"), "Job details", "https://code.example/base")[0]!.toJSON();
     const runningButtons = running.components.flatMap((component) =>
       component.type === ComponentType.ActionRow ? component.components : [],
     );
@@ -44,11 +44,17 @@ describe("Discord Components v2", () => {
       runningButtons.map((button) =>
         button.type === ComponentType.Button ? ("custom_id" in button ? button.custom_id : button.style) : undefined,
       ),
-      [ButtonStyle.Link, "job:refresh:abcd1234", "job:prompt:abcd1234", "job:cancel:abcd1234"],
+      [ButtonStyle.Link, ButtonStyle.Link, "job:refresh:abcd1234", "job:prompt:abcd1234", "job:cancel:abcd1234"],
     );
     assert.deepEqual(
       completedButtons.map((button) => (button.type === ComponentType.Button ? button.style : undefined)),
       [ButtonStyle.Link],
+    );
+    const codeServerButton = runningButtons[1];
+    assert.equal(codeServerButton && "label" in codeServerButton ? codeServerButton.label : undefined, "Open in code-server");
+    assert.equal(
+      codeServerButton && "url" in codeServerButton ? codeServerButton.url : undefined,
+      "https://code.example/base?folder=%2Ftmp%2Fexample",
     );
   });
 

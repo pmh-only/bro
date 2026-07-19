@@ -12,6 +12,7 @@ describe("configuration", () => {
     assert.deepEqual([...config.allowedUserIds], ["123", "456"]);
     assert.equal(config.opencodeUrl, "http://localhost:4096");
     assert.equal(config.opencodePublicUrl, "http://localhost:4096");
+    assert.equal(config.codeServerPublicUrl, "http://localhost:8081");
     assert.equal(config.opencodeAutoApprove, true);
     assert.equal(config.opencodeModel, undefined);
     assert.equal(config.opencodeReasoningEffort, undefined);
@@ -57,6 +58,16 @@ describe("configuration", () => {
 
     assert.equal(config.opencodeUrl, "http://opencode:4096");
     assert.equal(config.opencodePublicUrl, "https://opencode.example.com");
+  });
+
+  it("uses a separate public code-server URL for running job links", () => {
+    const config = loadConfig({
+      DISCORD_TOKEN: "token",
+      DISCORD_ALLOWED_USER_IDS: "123",
+      CODE_SERVER_PUBLIC_URL: "https://code.example.com/base/",
+    });
+
+    assert.equal(config.codeServerPublicUrl, "https://code.example.com/base");
   });
 
   it("accepts a model and reasoning-effort variant", () => {

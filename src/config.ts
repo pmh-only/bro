@@ -8,6 +8,7 @@ export interface AppConfig {
   allowedChannelIds: Set<string>;
   opencodeUrl: string;
   opencodePublicUrl: string;
+  codeServerPublicUrl: string;
   opencodeUsername: string;
   opencodePassword?: string;
   opencodeAgent: string;
@@ -84,6 +85,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (opencodePublicUrl.protocol !== "http:" && opencodePublicUrl.protocol !== "https:") {
     throw new Error("OPENCODE_PUBLIC_URL must use http or https");
   }
+  const codeServerPort = positiveInteger(env.CODE_SERVER_PORT, 8_081, "CODE_SERVER_PORT");
+  const codeServerPublicUrl = new URL(env.CODE_SERVER_PUBLIC_URL?.trim() || `http://localhost:${codeServerPort}`);
+  if (codeServerPublicUrl.protocol !== "http:" && codeServerPublicUrl.protocol !== "https:") {
+    throw new Error("CODE_SERVER_PUBLIC_URL must use http or https");
+  }
 
   const password = env.OPENCODE_PASSWORD?.trim();
   const opencodeModel = model(env.OPENCODE_MODEL);
@@ -96,6 +102,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     allowedChannelIds: idSet(env.DISCORD_ALLOWED_CHANNEL_IDS, "DISCORD_ALLOWED_CHANNEL_IDS"),
     opencodeUrl: opencodeUrl.toString().replace(/\/$/, ""),
     opencodePublicUrl: opencodePublicUrl.toString().replace(/\/$/, ""),
+    codeServerPublicUrl: codeServerPublicUrl.toString().replace(/\/$/, ""),
     opencodeUsername: env.OPENCODE_USERNAME?.trim() || "opencode",
     ...(password ? { opencodePassword: password } : {}),
     opencodeAgent: env.OPENCODE_AGENT?.trim() || "build",

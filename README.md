@@ -12,7 +12,7 @@ A lightweight, fully automated coding agent. Just type what you want, and it's d
 @bro create a readme for project helloworld
 ```
 That's it — Bro will automatically generate, review, and test the code, then push the commits.
-Job updates use Discord Components v2 status cards. Active jobs include refresh and cancel controls, and OpenCode sessions can be opened directly from the card.
+Job updates use Discord Components v2 status cards. Active jobs include refresh and cancel controls, and running jobs link directly to their OpenCode session and project folder in code-server.
 Running cards show a brief progress report from OpenCode's active todo, assistant text, or current tool and update only when that report changes.
 While a job is running, use **Add instruction** to queue a multiline prompt from a Discord modal; queued instructions persist across restarts.
 
@@ -37,6 +37,7 @@ docker run -it -p 8080:8080 -p 8081:8081 -p 4096:4096 \
 Only the home directory is persistent storage.
 * Browse project request/response threads at http://localhost:8080. Use the left project navigation to switch threads. The UI is read-only but contains job content, so expose it only through your authentication proxy or private network.
 * Open the `code-server` UI at http://localhost:8081.
+* Set `CODE_SERVER_PUBLIC_URL` when Discord users access code-server through a different hostname or authentication proxy.
 * [IMPORTANT] Log in with your git credentials and make them persistent.
 * Configure anything else you need in this environment (e.g., SSH keys, GPG signing enforcement).
 
