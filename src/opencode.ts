@@ -171,6 +171,7 @@ export class OpenCodeService {
       ? [
           "The persisted Discord job is still incomplete. Continue working on the original task end-to-end.",
           "Inspect the current repository and session state, finish verification, commit, and push.",
+          ...this.executionRules(),
           `Only when every requested step has succeeded, end your response with ${successMarker}.`,
           "",
           task,
@@ -268,7 +269,7 @@ export class OpenCodeService {
   private prompt(task: string): string {
     return [
       "Complete this authorized Discord request end-to-end in the current project.",
-      "Work only inside the current project; do not access external directories.",
+      ...this.executionRules(),
       "Make reasonable implementation decisions without asking interactive questions and run relevant verification.",
       "After completing and verifying the requested work, commit all intended changes and push the current branch to its configured remote.",
       "Always include this Git trailer in the commit: Co-authored-by: Bro, the bot <bro@pmh.codes>",
@@ -276,6 +277,14 @@ export class OpenCodeService {
       "",
       task,
     ].join("\n");
+  }
+
+  private executionRules(): string[] {
+    return [
+      "You are authorized to install any required OS packages, databases, CLIs, runtimes, libraries, and services.",
+      "You may create or modify files outside the current project when required to complete the task, including system, service, tool, or environment configuration.",
+      "Do not access, modify, or delete files in any other project or source repository; keep all application code changes scoped to the current project.",
+    ];
   }
 
   private async projectSession(

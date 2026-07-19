@@ -51,6 +51,7 @@ Only the home directory is persistent storage.
 * The core component of this project is OpenCode.
 * The Discord bot uses OpenCode for NLP and coding tasks.
 * System prompts enforce testing and git operations for each job.
+* Jobs may install required OS packages, databases, and services or update system configuration outside the checkout, but must not access other project repositories.
 * Every automated commit includes `Co-authored-by: Bro, the bot <bro@pmh.codes>`.
 * The TypeScript test suites run on Vitest with `npm test`.
 * Provider request timeouts are disabled for the selected OpenCode model, so the bot's task deadline controls long jobs.

@@ -166,6 +166,10 @@ describe("OpenCode task lifecycle", () => {
     assert.equal(createRequests, 0);
     await service.submitTask(process.cwd(), session.sessionId, "finish it", false, AbortSignal.timeout(1_000));
     assert.match(asyncPromptBodies[0] ?? "", /BRO_JOB_SUCCESS/);
+    assert.match(asyncPromptBodies[0] ?? "", /install any required OS packages, databases, CLIs, runtimes, libraries, and services/);
+    assert.match(asyncPromptBodies[0] ?? "", /modify files outside the current project/);
+    assert.match(asyncPromptBodies[0] ?? "", /Do not access, modify, or delete files in any other project or source repository/);
+    assert.doesNotMatch(asyncPromptBodies[0] ?? "", /do not access external directories/i);
     await service.submitInstruction(process.cwd(), session.sessionId, "use the new API", AbortSignal.timeout(1_000));
     assert.match(asyncPromptBodies[1] ?? "", /Additional instruction.*use the new API.*BRO_JOB_SUCCESS/s);
 
@@ -187,6 +191,8 @@ describe("OpenCode task lifecycle", () => {
 
     await service.submitTask(process.cwd(), "ses_async", "finish it", true, AbortSignal.timeout(1_000));
     assert.match(asyncPromptBodies[2] ?? "", /still incomplete/);
+    assert.match(asyncPromptBodies[2] ?? "", /install any required OS packages/);
+    assert.match(asyncPromptBodies[2] ?? "", /any other project or source repository/);
     sessionMessages = [{
       info: { id: "msg_2", sessionID: "ses_async", role: "assistant", parentID: "user_2", time: { created: now + 2 } },
       parts: [{ type: "text", text: "all done\nBRO_JOB_SUCCESS" }],
