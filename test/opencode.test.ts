@@ -12,6 +12,7 @@ describe("OpenCode task lifecycle", () => {
   let sessionStatuses: Record<string, { type: "idle" | "busy" }> = {};
   let sessionMessages: unknown[] = [];
   let sessionTodos: unknown[] = [];
+  let todoRequests = 0;
   let permissions: unknown[] = [];
   let questions: unknown[] = [];
   let resolvedRequests: string[] = [];
@@ -80,6 +81,7 @@ describe("OpenCode task lifecycle", () => {
       return;
     }
     if (request.method === "GET" && path.endsWith("/todo")) {
+      todoRequests += 1;
       response.setHeader("Content-Type", "application/json");
       response.end(JSON.stringify(sessionTodos));
       return;
@@ -117,6 +119,7 @@ describe("OpenCode task lifecycle", () => {
     sessionStatuses = {};
     sessionMessages = [];
     sessionTodos = [];
+    todoRequests = 0;
     permissions = [];
     questions = [];
     resolvedRequests = [];
@@ -178,8 +181,29 @@ describe("OpenCode task lifecycle", () => {
       { id: "todo_1", content: "Inspect existing behavior", status: "completed", priority: "high" },
       { id: "todo_2", content: "Implement the fix", status: "in_progress", priority: "high" },
     ];
+    sessionMessages = [{
+      info: { id: "msg_old", sessionID: "ses_async", role: "assistant", parentID: "user_old", time: { created: now - 1 } },
+      parts: [{ type: "text", text: "previous job" }],
+    }];
+    const starting = await service.taskSnapshot(process.cwd(), "ses_async", now, AbortSignal.timeout(1_000));
+    assert.equal(starting.progress, undefined);
+    assert.equal(todoRequests, 0);
+
+    sessionMessages = [{
+      info: { id: "msg_progress", sessionID: "ses_async", role: "assistant", parentID: "user_1", time: { created: now + 1 } },
+      parts: [],
+    }];
+    const beforeTodoUpdate = await service.taskSnapshot(process.cwd(), "ses_async", now, AbortSignal.timeout(1_000));
+    assert.equal(beforeTodoUpdate.progress, undefined);
+    assert.equal(todoRequests, 0);
+
+    sessionMessages = [{
+      info: { id: "msg_progress", sessionID: "ses_async", role: "assistant", parentID: "user_1", time: { created: now + 1 } },
+      parts: [{ type: "tool", tool: "todowrite", state: { status: "completed" } }],
+    }];
     const busy = await service.taskSnapshot(process.cwd(), "ses_async", now, AbortSignal.timeout(1_000));
     assert.equal(busy.progress, "Working on: Implement the fix\nPlan: 1/2 steps completed");
+    assert.equal(todoRequests, 1);
 
     sessionStatuses = { ses_async: { type: "idle" } };
     sessionTodos = [];

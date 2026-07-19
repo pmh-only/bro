@@ -211,16 +211,21 @@ export class OpenCodeService {
 
   async taskSnapshot(directory: string, sessionId: string, after: number, signal: AbortSignal): Promise<TaskSnapshot> {
     const client = this.client(directory);
-    const [statuses, messages, todos] = await Promise.all([
+    const [statuses, messages] = await Promise.all([
       client.session.status({ query: { directory }, signal }),
       client.session.messages({ path: { id: sessionId }, query: { directory, limit: 20 }, signal }),
-      client.session.todo({ path: { id: sessionId }, query: { directory }, signal }),
     ]);
     const status = statuses.data?.[sessionId];
     const assistant = [...(messages.data ?? [])]
       .reverse()
       .find((message) => message.info.role === "assistant" && message.info.time.created >= after);
-    const progress = progressReport(todos.data ?? [], assistant?.parts ?? []);
+    const parts = assistant?.parts ?? [];
+    const todosUpdated = parts.some((part) =>
+      part.type === "tool" && part.tool === "todowrite" && part.state.status === "completed");
+    const todos = todosUpdated
+      ? await client.session.todo({ path: { id: sessionId }, query: { directory }, signal })
+      : undefined;
+    const progress = assistant ? progressReport(todos?.data ?? [], parts) : undefined;
     if (status && status.type !== "idle") {
       return { state: "busy", successful: false, response: "", ...(progress ? { progress } : {}), diffs: [] };
     }
