@@ -29,11 +29,20 @@ describe("project thread web server", () => {
     if (!address || typeof address === "string") throw new Error("Thread server did not bind a port");
     const baseUrl = `http://127.0.0.1:${address.port}`;
 
-    const page = await (await fetch(baseUrl)).text();
-    assert.match(page, /Project threads/);
-    assert.match(page, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
-    assert.doesNotMatch(page, /<script>alert/);
-    assert.match(page, /Implemented safely/);
+    const defaultPage = await (await fetch(baseUrl)).text();
+    assert.match(defaultPage, /Project threads/);
+    assert.match(defaultPage, /<nav aria-label="Projects">/);
+    assert.match(defaultPage, /href="\/\?project=api" class="active" aria-current="page"/);
+    assert.match(defaultPage, /href="\/\?project=website"/);
+    assert.match(defaultPage, /add health endpoint/);
+    assert.doesNotMatch(defaultPage, /Implemented safely/);
+
+    const websitePage = await (await fetch(`${baseUrl}/?project=website`)).text();
+    assert.match(websitePage, /href="\/\?project=website" class="active" aria-current="page"/);
+    assert.match(websitePage, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+    assert.doesNotMatch(websitePage, /<script>alert/);
+    assert.doesNotMatch(websitePage, /add health endpoint/);
+    assert.match(websitePage, /Implemented safely/);
 
     const threads = await (await fetch(`${baseUrl}/api/projects`)).json() as Array<{
       project: string;
