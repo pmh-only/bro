@@ -62,6 +62,7 @@ Only the home directory is persistent storage.
 * OpenCode commits only inside `bro/job/<job-id>` worktrees. The coordinator serializes integration per project, rebases each later job onto earlier work, rejects merge commits and force pushes, pushes normally, and fast-forwards the canonical branch.
 * Rebase conflicts are returned to the later job's OpenCode session; that job must preserve both changes, test, continue the rebase, and recommit before integration proceeds.
 * Completion cards report changes introduced by the rebased job rather than unrelated parallel commits.
+* [pnpm reduces repeated Node.js dependency installation time and disk use across worktrees](docs/pnpm-worktree-assessment.md), but the coordinator's worktree creation path does not currently install dependencies.
 
 ## Pre-installed MCPs
 My favorite combination of MCPs:
