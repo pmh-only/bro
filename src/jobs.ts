@@ -5,10 +5,12 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type { Project } from "./projects.js";
 
 export type JobState = "queued" | "running" | "integrating" | "conflicted" | "cancelling" | "completed" | "failed" | "cancelled";
+export type JobScope = "project" | "global";
 export type InstructionAction = "queue" | "replace" | "steer";
 
 export interface Job {
   id: string;
+  scope: JobScope;
   project: Project;
   task: string;
   requestedBy: string;
@@ -38,6 +40,7 @@ export interface Job {
 }
 
 interface EnqueueOptions {
+  scope?: JobScope;
   project: Project;
   task: string;
   requestedBy: string;
@@ -77,6 +80,7 @@ export class JobStore {
       PRAGMA journal_mode = WAL;
       CREATE TABLE IF NOT EXISTS jobs (
         id TEXT PRIMARY KEY,
+        scope TEXT NOT NULL DEFAULT 'project',
         project_alias TEXT NOT NULL,
         project_directory TEXT NOT NULL,
         task TEXT NOT NULL,
@@ -128,6 +132,9 @@ export class JobStore {
       );
     `);
     const columns = this.database.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
+    if (!columns.some((column) => column.name === "scope")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN scope TEXT NOT NULL DEFAULT 'project'");
+    }
     if (!columns.some((column) => column.name === "base_commit")) {
       this.database.exec("ALTER TABLE jobs ADD COLUMN base_commit TEXT");
     }
@@ -189,6 +196,7 @@ export class JobStore {
     ).get(options.project.directory) as { sequence: number }).sequence);
     const job: Job = {
       id: randomUUID().slice(0, 8),
+      scope: options.scope ?? "project",
       project: options.project,
       task: options.task,
       requestedBy: options.requestedBy,
@@ -209,11 +217,11 @@ export class JobStore {
     this.database
       .prepare(`
         INSERT INTO jobs (
-          id, project_alias, project_directory, task, requested_by, channel_id, message_id, guild_id,
+          id, scope, project_alias, project_directory, task, requested_by, channel_id, message_id, guild_id,
           state, created_at, started_at, finished_at, session_id, session_url, result, error, base_commit, progress,
           worktree_directory, worktree_branch, target_branch, project_sequence, integration_base, integration_head,
           interrupt_action, prompt_attempts, last_prompt_at, notified
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           state = excluded.state, started_at = excluded.started_at, finished_at = excluded.finished_at,
           session_id = excluded.session_id, session_url = excluded.session_url, result = excluded.result,
@@ -265,10 +273,12 @@ export class JobStore {
 
   ready(): Job[] {
     const active = this.active();
+    const firstGlobalJob = active.find((job) => job.scope === "global");
     const legacyProjects = new Set(active
-      .filter((job) => job.state !== "queued" && !job.worktreeDirectory)
+      .filter((job) => job.scope === "project" && job.state !== "queued" && !job.worktreeDirectory)
       .map((job) => job.project.directory));
-    return active.filter((job) => job.state === "queued" && !legacyProjects.has(job.project.directory));
+    return active.filter((job) => job.state === "queued"
+      && (job.scope === "global" ? job.id === firstGlobalJob?.id : !legacyProjects.has(job.project.directory)));
   }
 
   canIntegrate(job: Job): boolean {
@@ -428,6 +438,7 @@ export class JobStore {
   private values(job: Job): SQLInputValue[] {
     return [
       job.id,
+      job.scope,
       job.project.alias,
       job.project.directory,
       job.task,
@@ -463,6 +474,7 @@ export class JobStore {
     const row = value as Record<string, string | number | null>;
     return {
       id: String(row.id),
+      scope: String(row.scope) as JobScope,
       project: { alias: String(row.project_alias), directory: String(row.project_directory) },
       task: String(row.task),
       requestedBy: String(row.requested_by),

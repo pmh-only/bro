@@ -7,6 +7,7 @@ import {
 } from "undici";
 import type { AppConfig } from "./config.js";
 import { intentSchema, type NaturalLanguageIntent, type RoutableJob, validateIntent } from "./intents.js";
+import type { JobScope } from "./jobs.js";
 
 export const opencodeDispatcherOptions = {
   headersTimeout: 0,
@@ -165,9 +166,14 @@ export class OpenCodeService {
     }
   }
 
-  async ensureTaskSession(directory: string, title: string, signal: AbortSignal): Promise<AsyncTaskSession> {
+  async ensureTaskSession(
+    directory: string,
+    title: string,
+    signal: AbortSignal,
+    reuseExisting = true,
+  ): Promise<AsyncTaskSession> {
     const client = this.client(directory);
-    const session = await this.projectSession(client, directory, title, signal);
+    const session = await this.projectSession(client, directory, title, signal, reuseExisting);
     return { sessionId: session.id, webUrl: this.sessionUrl(directory, session.id) };
   }
 
@@ -177,18 +183,21 @@ export class OpenCodeService {
     task: string,
     continuation: boolean,
     signal: AbortSignal,
+    scope: JobScope = "project",
   ): Promise<void> {
     const text = continuation
       ? [
           "The persisted Discord job is still incomplete. Continue working on the original task end-to-end.",
-          "Inspect the current repository and session state, finish verification, and commit all intended changes.",
-          ...this.executionRules(),
+          scope === "global"
+            ? "Inspect the current environment and session state, finish the requested global work, and verify the result."
+            : "Inspect the current repository and session state, finish verification, and commit all intended changes.",
+          ...this.executionRules(scope),
           ...this.languageRules(),
           `Only when every requested step has succeeded, end your response with ${successMarker}.`,
           "",
           task,
         ].join("\n")
-      : this.prompt(task);
+      : this.prompt(task, scope);
     await this.client(directory).session.promptAsync({
       path: { id: sessionId },
       body: {
@@ -207,6 +216,7 @@ export class OpenCodeService {
     instruction: string,
     signal: AbortSignal,
     messageId?: string,
+    scope: JobScope = "project",
   ): Promise<void> {
     await this.client(directory).session.promptAsync({
       path: { id: sessionId },
@@ -220,6 +230,7 @@ export class OpenCodeService {
           text: [
             "Additional instruction from the authorized Discord user for the current job:",
             instruction,
+            ...this.executionRules(scope),
             ...this.languageRules(),
             `Only after this instruction is fully completed and verified, end your response with ${successMarker}.`,
           ].join("\n\n"),
@@ -311,21 +322,34 @@ export class OpenCodeService {
     }
   }
 
-  private prompt(task: string): string {
+  private prompt(task: string, scope: JobScope): string {
     return [
-      "Complete this authorized Discord request end-to-end in the current project.",
-      ...this.executionRules(),
+      scope === "global"
+        ? "Complete this authorized global Discord request end-to-end using one job without a Git worktree."
+        : "Complete this authorized Discord request end-to-end in the current project.",
+      ...this.executionRules(scope),
       ...this.languageRules(),
       "Make reasonable implementation decisions without asking interactive questions and run relevant verification.",
-      "After completing and verifying the requested work, commit all intended changes. The coordinator will integrate and push them.",
-      "Always include this Git trailer in the commit: Co-authored-by: Bro, the bot <bro@pmh.codes>",
+      ...(scope === "project" ? [
+        "After completing and verifying the requested work, commit all intended changes. The coordinator will integrate and push them.",
+        "Always include this Git trailer in the commit: Co-authored-by: Bro, the bot <bro@pmh.codes>",
+      ] : []),
       `Only when every requested step has succeeded, end your response with ${successMarker}.`,
       "",
       task,
     ].join("\n");
   }
 
-  private executionRules(): string[] {
+  private executionRules(scope: JobScope): string[] {
+    if (scope === "global") {
+      return [
+        "This job is for environment-wide work and shell actions; it is not associated with a project or source repository.",
+        "You are authorized to install any required OS packages, databases, CLIs, runtimes, libraries, and services.",
+        "You may create or modify system, service, tool, or environment configuration required to complete the task.",
+        "Do not access, modify, or delete any registered project or source repository.",
+        "Do not create, switch, merge, or delete Git branches or worktrees, and do not commit, pull, push, force-push, or rebase.",
+      ];
+    }
     return [
       "You are authorized to install any required OS packages, databases, CLIs, runtimes, libraries, and services.",
       "You may create or modify files outside the current project when required to complete the task, including system, service, tool, or environment configuration.",
@@ -348,12 +372,15 @@ export class OpenCodeService {
     directory: string,
     title: string,
     signal: AbortSignal,
+    reuseExisting: boolean,
   ): Promise<Session> {
-    const listed = await client.session.list({ query: { directory }, signal });
-    const existing = (listed.data ?? [])
-      .filter((session) => session.directory === directory && !session.parentID && session.title.startsWith("Discord:"))
-      .sort((left, right) => right.time.updated - left.time.updated)[0];
-    if (existing) return existing;
+    if (reuseExisting) {
+      const listed = await client.session.list({ query: { directory }, signal });
+      const existing = (listed.data ?? [])
+        .filter((session) => session.directory === directory && !session.parentID && session.title.startsWith("Discord:"))
+        .sort((left, right) => right.time.updated - left.time.updated)[0];
+      if (existing) return existing;
+    }
 
     const created = await client.session.create({ body: { title }, query: { directory }, signal });
     if (!created.data) throw new Error("OpenCode did not return the created session");
@@ -387,7 +414,7 @@ export class OpenCodeService {
       "Always write task and message fields in English. Preserve project aliases, repository URLs, and job IDs exactly.",
       "Return exactly one structured intent using these rules:",
       "- run: start independent parallel work in an existing project. Use an exact alias and preserve the requested work in task.",
-      "- global: apply the same requested change independently to every registered project. Set project to null and preserve the requested work in task.",
+      "- global: run one environment-wide task or shell action that is not tied to a registered project. Set project to null and preserve the requested work in task. Never use global to modify registered projects.",
       "- instruction: modify exactly one listed parallel job. Set its exact jobId and choose queue, steer, or replace in instructionAction.",
       "- queue: use for non-urgent follow-up work after that job's active and pending instructions succeed.",
       "- steer: interrupt that job, run this next, then preserve its pending instructions.",

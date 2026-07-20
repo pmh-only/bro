@@ -21,7 +21,9 @@ function response(job: Job): string {
   if (job.state === "failed" && job.error) return job.error;
   if (job.progress) return job.progress;
   if (job.error) return job.error;
-  return job.state === "queued" ? "Waiting for the project queue." : "No response yet.";
+  return job.state === "queued"
+    ? `Waiting for the ${job.scope === "global" ? "global" : "project"} queue.`
+    : "No response yet.";
 }
 
 export function projectThreads(store: JobStore): ProjectThread[] {

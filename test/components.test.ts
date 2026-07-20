@@ -14,6 +14,7 @@ import type { Job, JobState } from "../src/jobs.js";
 function job(state: JobState): Job {
   return {
     id: "abcd1234",
+    scope: "project",
     project: { alias: "example", directory: "/tmp/example" },
     task: "test",
     requestedBy: "1",

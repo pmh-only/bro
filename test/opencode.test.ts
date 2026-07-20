@@ -167,6 +167,9 @@ describe("OpenCode task lifecycle", () => {
     const session = await service.ensureTaskSession(process.cwd(), "Discord: async", AbortSignal.timeout(1_000));
     assert.equal(session.sessionId, "ses_async");
     assert.equal(createRequests, 0);
+    const globalSession = await service.ensureTaskSession(process.cwd(), "Discord: global", AbortSignal.timeout(1_000), false);
+    assert.equal(globalSession.sessionId, "ses_test");
+    assert.equal(createRequests, 1);
     await service.submitTask(process.cwd(), session.sessionId, "finish it", false, AbortSignal.timeout(1_000));
     assert.match(asyncPromptBodies[0] ?? "", /BRO_JOB_SUCCESS/);
     assert.match(asyncPromptBodies[0] ?? "", /install any required OS packages, databases, CLIs, runtimes, libraries, and services/);
@@ -236,6 +239,13 @@ describe("OpenCode task lifecycle", () => {
     assert.match(asyncPromptBodies[2] ?? "", /install any required OS packages/);
     assert.match(asyncPromptBodies[2] ?? "", /any other project or source repository/);
     assert.match(asyncPromptBodies[2] ?? "", /Always process the request in English/);
+    await service.submitTask(process.cwd(), "ses_async", "install a system service", false, AbortSignal.timeout(1_000), "global");
+    assert.match(asyncPromptBodies[3] ?? "", /one job without a Git worktree/);
+    assert.match(asyncPromptBodies[3] ?? "", /environment-wide work and shell actions/);
+    assert.match(asyncPromptBodies[3] ?? "", /Do not access, modify, or delete any registered project/);
+    assert.doesNotMatch(asyncPromptBodies[3] ?? "", /commit all intended changes/);
+    await service.submitInstruction(process.cwd(), "ses_async", "adjust the service", AbortSignal.timeout(1_000), undefined, "global");
+    assert.match(asyncPromptBodies[4] ?? "", /adjust the service.*Do not access, modify, or delete any registered project/s);
     sessionMessages = [{
       info: { id: "msg_2", sessionID: "ses_async", role: "assistant", parentID: "user_2", time: { created: now + 2 } },
       parts: [{ type: "text", text: "all done\nBRO_JOB_SUCCESS" }],
@@ -249,7 +259,7 @@ describe("OpenCode task lifecycle", () => {
     await service.resolvePendingRequests(process.cwd(), "ses_async", AbortSignal.timeout(1_000));
     assert.deepEqual(resolvedRequests, ["/permission/per_1/reply", "/question/que_1/reject"]);
     await service.submitConflictResolution(process.cwd(), "ses_async", ["src/api.ts"], AbortSignal.timeout(1_000));
-    assert.match(asyncPromptBodies[3] ?? "", /rebase.*conflicts.*src\/api\.ts.*rebase --continue.*Do not merge/s);
+    assert.match(asyncPromptBodies[5] ?? "", /rebase.*conflicts.*src\/api\.ts.*rebase --continue.*Do not merge/s);
     await service.close();
   });
 });

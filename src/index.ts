@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { dirname } from "node:path";
 import {
   Client,
   Events,
@@ -52,9 +53,13 @@ function duration(job: Job): string | undefined {
 }
 
 function formatJob(job: Job): string {
-  const heading = `Job \`${job.id}\` on **${inline(job.project.alias)}**`;
+  const heading = job.scope === "global"
+    ? `Global job \`${job.id}\``
+    : `Job \`${job.id}\` on **${inline(job.project.alias)}**`;
   const elapsed = duration(job);
-  if (job.state === "queued") return `${heading}\nWaiting for the current project job to finish.`;
+  if (job.state === "queued") {
+    return `${heading}\nWaiting for the current ${job.scope === "global" ? "global" : "project"} job to finish.`;
+  }
   if (job.state === "running") {
     const session = job.sessionId ? `\nOpenCode session: \`${job.sessionId}\`` : "";
     const attempts = job.promptAttempts > 1 ? `\nContinuation attempts: ${job.promptAttempts - 1}` : "";
@@ -98,6 +103,7 @@ async function main(): Promise<void> {
   const version = await opencode.assertHealthy();
   const jobs = new JobStore(config.jobsDatabase);
   jobs.resume();
+  const globalProject = { alias: "Global", directory: dirname(config.jobsDatabase) };
   const requestControllers = new Set<AbortController>();
   const executionDirectory = (job: Job) => job.worktreeDirectory ?? job.project.directory;
 
@@ -200,6 +206,7 @@ async function main(): Promise<void> {
       instruction.content,
       AbortSignal.timeout(30_000),
       `msg_bro_${job.id}_${instruction.id}`,
+      job.scope,
     );
     jobs.markInstructionSent(instruction.id);
   };
@@ -391,27 +398,32 @@ async function main(): Promise<void> {
     if (snapshot.error) job.error = snapshot.error;
     jobs.save(job);
     const currentTask = jobs.activeInstruction(job.id)?.content ?? job.task;
-    await opencode.submitTask(executionDirectory(job), job.sessionId, currentTask, true, AbortSignal.timeout(30_000));
+    await opencode.submitTask(executionDirectory(job), job.sessionId, currentTask, true, AbortSignal.timeout(30_000), job.scope);
     await publishJob(job);
   };
 
   const startJob = async (job: Job): Promise<void> => {
-    const prepared = await prepareJobWorktree(
-      job.project.directory,
-      config.worktreesRoot,
-      job.id,
-      AbortSignal.timeout(30_000),
-      job.targetBranch,
-    );
-    job.worktreeDirectory = prepared.directory;
-    job.worktreeBranch = prepared.branch;
-    job.targetBranch = prepared.targetBranch;
-    job.baseCommit ??= prepared.baseCommit;
-    jobs.save(job);
+    let directory = job.project.directory;
+    if (job.scope === "project") {
+      const prepared = await prepareJobWorktree(
+        job.project.directory,
+        config.worktreesRoot,
+        job.id,
+        AbortSignal.timeout(30_000),
+        job.targetBranch,
+      );
+      directory = prepared.directory;
+      job.worktreeDirectory = prepared.directory;
+      job.worktreeBranch = prepared.branch;
+      job.targetBranch = prepared.targetBranch;
+      job.baseCommit ??= prepared.baseCommit;
+      jobs.save(job);
+    }
     const session = await opencode.ensureTaskSession(
-      prepared.directory,
+      directory,
       `Discord: ${truncate(job.task.replace(/\s+/g, " "), 80)}`,
       AbortSignal.timeout(30_000),
+      job.scope === "project",
     );
     job.state = "running";
     job.startedAt ??= Date.now();
@@ -422,7 +434,7 @@ async function main(): Promise<void> {
     job.progress = "Starting OpenCode task.";
     jobs.save(job);
     await publishJob(job);
-    await opencode.submitTask(prepared.directory, job.sessionId, job.task, false, AbortSignal.timeout(30_000));
+    await opencode.submitTask(directory, job.sessionId, job.task, false, AbortSignal.timeout(30_000), job.scope);
   };
 
   const runPoll = async (): Promise<void> => {
@@ -532,7 +544,7 @@ async function main(): Promise<void> {
           [
             "**OpenCode bot**",
             "Mention me with a natural-language request to work in a registered project.",
-            "Ask for a global change to run the same task independently in every registered project.",
+            "Ask for global environment work or shell actions that are not tied to a project.",
             "You can also ask me to clone and register an HTTPS or SSH Git repository, optionally followed by a task.",
             "Ask naturally to list projects, check job status, or cancel a job.",
           ].join("\n"),
@@ -563,7 +575,9 @@ async function main(): Promise<void> {
             statusMessage,
             "Active jobs",
             active.length
-              ? active.map((job) => `\`${job.id}\` ${job.state} on **${inline(job.project.alias)}**`).join("\n")
+              ? active.map((job) => job.scope === "global"
+                ? `\`${job.id}\` ${job.state} globally`
+                : `\`${job.id}\` ${job.state} on **${inline(job.project.alias)}**`).join("\n")
               : "There are no active jobs.",
           );
         }
@@ -614,33 +628,17 @@ async function main(): Promise<void> {
       }
 
       if (intent.action === "global") {
-        const registered = projects.list();
-        if (!registered.length) {
-          await editCard(statusMessage, "No registered projects", "Register at least one project before starting a global job.");
-          return;
-        }
         if (!intent.task) throw new Error("OpenCode did not identify the global task");
-
-        const globalJobs: Job[] = [];
-        for (const [index, project] of registered.entries()) {
-          const projectMessage = index === 0
-            ? statusMessage
-            : await replyCard(message, "Queueing global job", `Preparing **${inline(project.alias)}**.`);
-          const job = jobs.enqueue({
-            project,
-            task: intent.task,
-            requestedBy: message.author.id,
-            channelId: message.channelId,
-            messageId: projectMessage.id,
-            ...(message.guildId ? { guildId: message.guildId } : {}),
-          });
-          globalJobs.push(job);
-          await editJob(projectMessage, job);
-        }
-        await notifyUser(
-          message,
-          `Global job queued for ${globalJobs.length} project${globalJobs.length === 1 ? "" : "s"}: ${globalJobs.map((job) => `**${inline(job.project.alias)}**`).join(", ")}.`,
-        );
+        const job = jobs.enqueue({
+          scope: "global",
+          project: globalProject,
+          task: intent.task,
+          requestedBy: message.author.id,
+          channelId: message.channelId,
+          messageId: statusMessage.id,
+          ...(message.guildId ? { guildId: message.guildId } : {}),
+        });
+        await editJob(statusMessage, job);
         void pollJobs();
         return;
       }

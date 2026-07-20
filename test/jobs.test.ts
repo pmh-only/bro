@@ -20,6 +20,17 @@ function enqueue(store: JobStore, task: string) {
   });
 }
 
+function enqueueGlobal(store: JobStore, task: string) {
+  return store.enqueue({
+    scope: "global",
+    project: { alias: "Global", directory: "/tmp/bro-data" },
+    task,
+    requestedBy: "user-1",
+    channelId: "channel-1",
+    messageId: `message-${task}`,
+  });
+}
+
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
@@ -49,6 +60,27 @@ describe("persistent project jobs", () => {
     second.finishedAt = Date.now();
     store.save(second);
     assert.deepEqual(store.active(), []);
+    store.close();
+  });
+
+  it("runs one non-worktree global job at a time", () => {
+    const store = new JobStore(":memory:");
+    const first = enqueueGlobal(store, "install a service");
+    const second = enqueueGlobal(store, "configure a shell tool");
+
+    assert.deepEqual(store.ready().map((job) => job.id), [first.id]);
+    first.state = "running";
+    first.sessionId = "ses_global";
+    first.startedAt = Date.now();
+    store.save(first);
+    assert.equal(store.get(first.id)?.scope, "global");
+    assert.equal(store.get(first.id)?.worktreeDirectory, undefined);
+    assert.deepEqual(store.ready(), []);
+
+    first.state = "completed";
+    first.finishedAt = Date.now();
+    store.save(first);
+    assert.deepEqual(store.ready().map((job) => job.id), [second.id]);
     store.close();
   });
 
@@ -117,6 +149,7 @@ describe("persistent project jobs", () => {
     legacyStore.close();
     const oldDatabase = new DatabaseSync(path);
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN base_commit");
+    oldDatabase.exec("ALTER TABLE jobs DROP COLUMN scope");
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN progress");
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN interrupt_action");
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN worktree_directory");
@@ -131,6 +164,7 @@ describe("persistent project jobs", () => {
     oldDatabase.close();
 
     const migrated = new JobStore(path);
+    assert.equal(migrated.get(legacyJob.id)?.scope, "project");
     assert.equal(migrated.activeInstruction(legacyJob.id)?.content, "still running");
     migrated.markInstructionCompleted(legacyInstruction.id);
     assert.equal(migrated.beginIntegrationIfIdle(legacyJob.id, "migration complete")?.state, "integrating");
