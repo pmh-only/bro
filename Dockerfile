@@ -100,7 +100,7 @@ RUN npm install --global \
     && npm cache clean --force
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends build-essential pkg-config python3 \
+    && apt-get install --yes --no-install-recommends build-essential jq pkg-config python3 ripgrep vim wget \
     && rm -rf /var/lib/apt/lists/* \
     && npm install --global "pnpm@${PNPM_VERSION}" \
     && npm cache clean --force

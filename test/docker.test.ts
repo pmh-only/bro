@@ -17,13 +17,22 @@ describe("Docker OpenCode configuration", () => {
     assert.match(dockerfile, /install --mode=0755 .*\/usr\/local\/bin\/kubectl/);
   });
 
-  it("enables an inaccessible standard Docker socket at startup", async () => {
+  it("sets shared runtime paths to mode 0777 at startup", async () => {
     const entrypoint = await readFile("docker/docker-entrypoint.sh", "utf8");
 
+    assert.match(entrypoint, /temporary_directory="\/tmp\/opencode"/);
+    assert.match(entrypoint, /mkdir -p "\$temporary_directory"/);
+    assert.match(entrypoint, /sudo chmod 0777 "\$temporary_directory"/);
     assert.match(entrypoint, /docker_socket="\/var\/run\/docker\.sock"/);
-    assert.match(entrypoint, /\[\[ -z "\$\{DOCKER_HOST:-\}" && -S "\$docker_socket" \]\]/);
-    assert.match(entrypoint, /sudo chmod 0666 "\$docker_socket"/);
+    assert.match(entrypoint, /\[\[ -S "\$docker_socket" \]\]/);
+    assert.match(entrypoint, /sudo chmod 0777 "\$docker_socket"/);
     assert.match(entrypoint, /DOCKER_HOST="unix:\/\/\$docker_socket"/);
+  });
+
+  it("includes interactive command-line development tools", async () => {
+    const dockerfile = await readFile("Dockerfile", "utf8");
+
+    assert.match(dockerfile, /apt-get install[^\n]+build-essential jq pkg-config python3 ripgrep vim wget/);
   });
 
   it("serves project threads on 8080 and code-server on 8081", async () => {

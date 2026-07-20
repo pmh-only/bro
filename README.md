@@ -46,7 +46,7 @@ Only the home directory is persistent storage.
 
 ### 5. (Optional) Add Docker-in-Docker socket
 * I recommend providing dind to bro for better development environment.
-* When `/var/run/docker.sock` is mounted, the entrypoint grants the `opencode` user read/write access and uses it as `DOCKER_HOST`. This changes the host socket mode to `0666`, which grants every container process Docker daemon access.
+* At startup, the entrypoint creates `/tmp/opencode` and sets it to mode `0777`. When `/var/run/docker.sock` is mounted, it also sets the socket to mode `0777` and uses it as `DOCKER_HOST`. These modes grant every container process access to those paths and the Docker daemon.
 
 ## How it works?
 * The core component of this project is OpenCode.
@@ -70,7 +70,7 @@ My favorite combination of MCPs:
 * context7
 * playwright
 
-The development image also includes the Docker CLI and `kubectl`.
+The development image also includes compilers, Python, Git, SSH, curl, `vim`, `wget`, `jq`, `ripgrep`, the Docker CLI, and `kubectl`.
 
 ## Inspired by
 * OpenCode

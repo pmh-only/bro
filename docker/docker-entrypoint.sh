@@ -22,14 +22,17 @@ export OPENCODE_URL="${OPENCODE_URL:-http://127.0.0.1:${OPENCODE_PORT:-4096}}"
 export OPENCODE_USERNAME="${OPENCODE_USERNAME:-${OPENCODE_SERVER_USERNAME:-opencode}}"
 export OPENCODE_PASSWORD="${OPENCODE_PASSWORD:-${OPENCODE_SERVER_PASSWORD:-}}"
 
+temporary_directory="/tmp/opencode"
+if ! mkdir -p "$temporary_directory" || ! sudo chmod 0777 "$temporary_directory"; then
+  printf 'Warning: unable to set permissions on %s\n' "$temporary_directory" >&2
+fi
+
 docker_socket="/var/run/docker.sock"
-if [[ -z "${DOCKER_HOST:-}" && -S "$docker_socket" ]]; then
-  if [[ ! -r "$docker_socket" || ! -w "$docker_socket" ]]; then
-    if ! sudo chmod 0666 "$docker_socket"; then
-      printf 'Warning: unable to grant access to %s\n' "$docker_socket" >&2
-    fi
+if [[ -S "$docker_socket" ]]; then
+  if ! sudo chmod 0777 "$docker_socket"; then
+    printf 'Warning: unable to set permissions on %s\n' "$docker_socket" >&2
   fi
-  if [[ -r "$docker_socket" && -w "$docker_socket" ]]; then
+  if [[ -z "${DOCKER_HOST:-}" && -r "$docker_socket" && -w "$docker_socket" ]]; then
     export DOCKER_HOST="unix://$docker_socket"
   fi
 fi
