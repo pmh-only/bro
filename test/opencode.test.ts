@@ -187,6 +187,9 @@ describe("OpenCode task lifecycle", () => {
     sessionTodos = [
       { id: "todo_1", content: "Inspect existing behavior", status: "completed", priority: "high" },
       { id: "todo_2", content: "Implement the fix", status: "in_progress", priority: "high" },
+      { id: "todo_3", content: "Update the running embed", status: "in_progress", priority: "high" },
+      { id: "todo_4", content: "Run verification", status: "pending", priority: "high" },
+      { id: "todo_5", content: "Commit the changes", status: "pending", priority: "high" },
     ];
     sessionMessages = [{
       info: { id: "msg_old", sessionID: "ses_async", role: "assistant", parentID: "user_old", time: { created: now - 1 } },
@@ -209,7 +212,15 @@ describe("OpenCode task lifecycle", () => {
       parts: [{ type: "tool", tool: "todowrite", state: { status: "completed" } }],
     }];
     const busy = await service.taskSnapshot(process.cwd(), "ses_async", now, AbortSignal.timeout(1_000));
-    assert.equal(busy.progress, "Working on: Implement the fix\nPlan: 1/2 steps completed");
+    assert.equal(busy.progress, [
+      "In progress (2):",
+      "- Implement the fix",
+      "- Update the running embed",
+      "Queued items (2):",
+      "- Run verification",
+      "- Commit the changes",
+      "Plan: 1/5 steps completed",
+    ].join("\n"));
     assert.equal(todoRequests, 1);
 
     sessionStatuses = { ses_async: { type: "idle" } };

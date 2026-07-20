@@ -44,10 +44,20 @@ function brief(value: string, maximum = 400): string {
 
 function progressReport(todos: Todo[], parts: Part[]): string | undefined {
   if (todos.length) {
-    const current = todos.find((todo) => todo.status === "in_progress") ?? todos.find((todo) => todo.status === "pending");
+    const active = todos.filter((todo) => todo.status === "in_progress");
+    const queued = todos.filter((todo) => todo.status === "pending");
     const completed = todos.filter((todo) => todo.status === "completed").length;
-    const activity = current ? `Working on: ${brief(current.content, 300)}` : "Finalizing completed steps.";
-    return `${activity}\nPlan: ${completed}/${todos.length} steps completed`;
+    const group = (label: string, items: Todo[]) => {
+      const visible = items.slice(0, 2).map((todo) => `- ${brief(todo.content, 100)}`);
+      if (items.length > visible.length) visible.push(`- +${items.length - visible.length} more`);
+      return items.length ? [`${label} (${items.length}):`, ...visible] : [];
+    };
+    const activity = [
+      ...group("In progress", active),
+      ...group("Queued items", queued),
+    ];
+    if (!activity.length) activity.push("Finalizing completed steps.");
+    return [...activity, `Plan: ${completed}/${todos.length} steps completed`].join("\n");
   }
   const tool = [...parts].reverse().find((part): part is Extract<Part, { type: "tool" }> =>
     part.type === "tool" && (part.state.status === "running" || part.state.status === "pending"));
