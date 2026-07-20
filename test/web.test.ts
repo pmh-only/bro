@@ -17,12 +17,21 @@ describe("project thread web server", () => {
     first.result = "Changes: 2 files\n\nImplemented safely.";
     first.finishedAt = Date.now();
     store.save(first);
+    await new Promise((resolve) => setTimeout(resolve, 2));
     store.enqueue({
       project: { alias: "api", directory: "/tmp/api" },
       task: "add health endpoint",
       requestedBy: "1",
       channelId: "channel",
       messageId: "message-2",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    store.enqueue({
+      project: { alias: "website", directory: "/tmp/website" },
+      task: "polish the homepage",
+      requestedBy: "1",
+      channelId: "channel",
+      messageId: "message-3",
     });
     const server = await startThreadServer(store, 0, "127.0.0.1");
     const address = server.address();
@@ -32,10 +41,13 @@ describe("project thread web server", () => {
     const defaultPage = await (await fetch(baseUrl)).text();
     assert.match(defaultPage, /Project threads/);
     assert.match(defaultPage, /<nav aria-label="Projects">/);
-    assert.match(defaultPage, /href="\/\?project=api" class="active" aria-current="page"/);
-    assert.match(defaultPage, /href="\/\?project=website"/);
-    assert.match(defaultPage, /add health endpoint/);
-    assert.doesNotMatch(defaultPage, /Implemented safely/);
+    assert.match(defaultPage, /href="\/\?project=website" class="active" aria-current="page"/);
+    assert.match(defaultPage, /href="\/\?project=api"/);
+    assert.match(defaultPage, /aria-label="Job summary"/);
+    assert.match(defaultPage, /polish the homepage/);
+    assert.match(defaultPage, /<span class="latest">Latest<\/span>/);
+    assert.ok(defaultPage.indexOf("polish the homepage") < defaultPage.indexOf("Implemented safely"));
+    assert.doesNotMatch(defaultPage, /add health endpoint/);
 
     const websitePage = await (await fetch(`${baseUrl}/?project=website`)).text();
     assert.match(websitePage, /href="\/\?project=website" class="active" aria-current="page"/);
@@ -48,8 +60,8 @@ describe("project thread web server", () => {
       project: string;
       jobs: Array<{ request: string; response: string }>;
     }>;
-    assert.deepEqual(threads.map((thread) => thread.project), ["api", "website"]);
-    assert.equal(threads[1]?.jobs[0]?.request, "add <script>alert(1)</script>");
+    assert.deepEqual(threads.map((thread) => thread.project), ["website", "api"]);
+    assert.deepEqual(threads[0]?.jobs.map((job) => job.request), ["polish the homepage", "add <script>alert(1)</script>"]);
     assert.equal(await (await fetch(`${baseUrl}/healthz`)).text(), "ok\n");
 
     await closeThreadServer(server);

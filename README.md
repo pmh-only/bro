@@ -35,7 +35,7 @@ docker run -it -p 8080:8080 -p 8081:8081 -p 4096:4096 \
 
 ### 3. Configure the development environment
 Only the home directory is persistent storage.
-* Browse project request/response threads at http://localhost:8080. Use the left project navigation to switch threads. The UI is read-only but contains job content, so expose it only through your authentication proxy or private network.
+* Browse project request/response threads at http://localhost:8080. Projects and jobs are ordered by latest activity; use the left project navigation to switch threads. The UI is read-only but contains job content, so expose it only through your authentication proxy or private network.
 * Open the `code-server` UI at http://localhost:8081.
 * Set `CODE_SERVER_PUBLIC_URL` when Discord users access code-server through a different hostname or authentication proxy.
 * [IMPORTANT] Log in with your git credentials and make them persistent.
