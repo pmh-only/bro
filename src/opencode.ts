@@ -189,10 +189,17 @@ export class OpenCodeService {
     } as unknown as Parameters<OpencodeClient["session"]["promptAsync"]>[0]);
   }
 
-  async submitInstruction(directory: string, sessionId: string, instruction: string, signal: AbortSignal): Promise<void> {
+  async submitInstruction(
+    directory: string,
+    sessionId: string,
+    instruction: string,
+    signal: AbortSignal,
+    messageId?: string,
+  ): Promise<void> {
     await this.client(directory).session.promptAsync({
       path: { id: sessionId },
       body: {
+        ...(messageId ? { messageID: messageId } : {}),
         agent: this.config.opencodeAgent,
         ...this.modelSelection(),
         tools: { question: false },
@@ -201,7 +208,7 @@ export class OpenCodeService {
           text: [
             "Additional instruction from the authorized Discord user for the current job:",
             instruction,
-            `Only after the original task and this instruction are fully completed, end your response with ${successMarker}.`,
+            `Only after this instruction is fully completed and verified, end your response with ${successMarker}.`,
           ].join("\n\n"),
         }],
       },

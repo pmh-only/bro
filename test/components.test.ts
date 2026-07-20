@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import { ButtonStyle, ComponentType } from "discord.js";
-import { cardComponents, jobComponents, jobInstructionModal, parseJobButton } from "../src/components.js";
+import {
+  cardComponents,
+  instructionChoiceComponents,
+  jobComponents,
+  jobInstructionModal,
+  parseInstructionChoice,
+  parseJobButton,
+} from "../src/components.js";
 import type { Job, JobState } from "../src/jobs.js";
 
 function job(state: JobState): Job {
@@ -73,5 +80,22 @@ describe("Discord Components v2", () => {
     assert.equal(modal.custom_id, "job:prompt:abcd1234");
     assert.equal(input?.type, ComponentType.TextInput);
     assert.equal(input && "custom_id" in input ? input.custom_id : undefined, "instruction");
+  });
+
+  it("prompts for queue, replace, or steer after receiving an instruction", () => {
+    const choice = instructionChoiceComponents("1234abcd", "abcd1234")[0]!.toJSON();
+    const buttons = choice.components.flatMap((component) =>
+      component.type === ComponentType.ActionRow ? component.components : [],
+    );
+
+    assert.deepEqual(
+      buttons.map((button) => button.type === ComponentType.Button && "custom_id" in button ? button.custom_id : undefined),
+      ["instruction:queue:1234abcd", "instruction:replace:1234abcd", "instruction:steer:1234abcd"],
+    );
+    assert.deepEqual(parseInstructionChoice("instruction:steer:1234abcd"), {
+      action: "steer",
+      choiceId: "1234abcd",
+    });
+    assert.equal(parseInstructionChoice("instruction:skip:1234abcd"), undefined);
   });
 });

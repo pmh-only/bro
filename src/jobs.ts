@@ -5,6 +5,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type { Project } from "./projects.js";
 
 export type JobState = "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled";
+export type InstructionAction = "queue" | "replace" | "steer";
 
 export interface Job {
   id: string;
@@ -24,6 +25,7 @@ export interface Job {
   error?: string;
   baseCommit?: string;
   progress?: string;
+  interruptAction?: "replace" | "steer";
   promptAttempts: number;
   lastPromptAt?: number;
   notified: boolean;
@@ -43,6 +45,18 @@ export interface JobInstruction {
   jobId: string;
   content: string;
   createdAt: number;
+  sequence: number;
+  sentAt?: number;
+  completedAt?: number;
+}
+
+export interface InstructionChoice {
+  id: string;
+  jobId: string;
+  content: string;
+  requestedBy: string;
+  createdAt: number;
+  resolvedAction?: InstructionAction;
 }
 
 const terminalStates = new Set<JobState>(["completed", "failed", "cancelled"]);
@@ -74,6 +88,7 @@ export class JobStore {
         error TEXT,
         base_commit TEXT,
         progress TEXT,
+        interrupt_action TEXT,
         prompt_attempts INTEGER NOT NULL DEFAULT 0,
         last_prompt_at INTEGER,
         notified INTEGER NOT NULL DEFAULT 0
@@ -84,10 +99,21 @@ export class JobStore {
         job_id TEXT NOT NULL,
         content TEXT NOT NULL,
         created_at INTEGER NOT NULL,
+        sequence INTEGER NOT NULL,
         sent_at INTEGER,
+        completed_at INTEGER,
         FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
       );
       CREATE INDEX IF NOT EXISTS job_instructions_pending ON job_instructions(job_id, sent_at, created_at);
+      CREATE TABLE IF NOT EXISTS instruction_choices (
+        id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        requested_by TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        resolved_action TEXT,
+        FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
+      );
     `);
     const columns = this.database.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
     if (!columns.some((column) => column.name === "base_commit")) {
@@ -96,6 +122,28 @@ export class JobStore {
     if (!columns.some((column) => column.name === "progress")) {
       this.database.exec("ALTER TABLE jobs ADD COLUMN progress TEXT");
     }
+    if (!columns.some((column) => column.name === "interrupt_action")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN interrupt_action TEXT");
+    }
+    const instructionColumns = this.database.prepare("PRAGMA table_info(job_instructions)").all() as Array<{ name: string }>;
+    if (!instructionColumns.some((column) => column.name === "sequence")) {
+      this.database.exec("ALTER TABLE job_instructions ADD COLUMN sequence INTEGER; UPDATE job_instructions SET sequence = id");
+    }
+    if (!instructionColumns.some((column) => column.name === "completed_at")) {
+      this.database.exec(`
+        ALTER TABLE job_instructions ADD COLUMN completed_at INTEGER;
+        UPDATE job_instructions SET completed_at = sent_at
+        WHERE sent_at IS NOT NULL AND (
+          job_id IN (SELECT id FROM jobs WHERE state IN ('completed', 'failed', 'cancelled'))
+          OR id != (
+            SELECT latest.id FROM job_instructions AS latest
+            WHERE latest.job_id = job_instructions.job_id AND latest.sent_at IS NOT NULL
+            ORDER BY latest.sent_at DESC, latest.id DESC LIMIT 1
+          )
+        )
+      `);
+    }
+    this.database.exec("DROP INDEX job_instructions_pending; CREATE INDEX job_instructions_pending ON job_instructions(job_id, sent_at, sequence)");
   }
 
   enqueue(options: EnqueueOptions): Job {
@@ -122,12 +170,13 @@ export class JobStore {
         INSERT INTO jobs (
           id, project_alias, project_directory, task, requested_by, channel_id, message_id, guild_id,
           state, created_at, started_at, finished_at, session_id, session_url, result, error, base_commit, progress,
-          prompt_attempts, last_prompt_at, notified
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          interrupt_action, prompt_attempts, last_prompt_at, notified
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           state = excluded.state, started_at = excluded.started_at, finished_at = excluded.finished_at,
           session_id = excluded.session_id, session_url = excluded.session_url, result = excluded.result,
           error = excluded.error, base_commit = excluded.base_commit, progress = excluded.progress,
+          interrupt_action = excluded.interrupt_action,
           prompt_attempts = excluded.prompt_attempts,
           last_prompt_at = excluded.last_prompt_at, notified = excluded.notified
       `)
@@ -136,6 +185,18 @@ export class JobStore {
 
   get(id: string): Job | undefined {
     return this.row(this.database.prepare("SELECT * FROM jobs WHERE id = ?").get(id.toLowerCase()));
+  }
+
+  runningForProject(directory: string): Job | undefined {
+    return this.row(this.database
+      .prepare("SELECT * FROM jobs WHERE project_directory = ? AND state = 'running' AND session_id IS NOT NULL ORDER BY created_at LIMIT 1")
+      .get(directory));
+  }
+
+  runningByMessage(channelId: string, messageId: string): Job | undefined {
+    return this.row(this.database
+      .prepare("SELECT * FROM jobs WHERE channel_id = ? AND message_id = ? AND state = 'running' AND session_id IS NOT NULL")
+      .get(channelId, messageId));
   }
 
   active(): Job[] {
@@ -185,24 +246,130 @@ export class JobStore {
 
   enqueueInstruction(jobId: string, content: string): JobInstruction {
     const createdAt = Date.now();
+    const sequence = Number((this.database
+      .prepare("SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM job_instructions WHERE job_id = ?")
+      .get(jobId) as { sequence: number }).sequence);
     const result = this.database
-      .prepare("INSERT INTO job_instructions (job_id, content, created_at) VALUES (?, ?, ?)")
-      .run(jobId, content, createdAt);
-    return { id: Number(result.lastInsertRowid), jobId, content, createdAt };
+      .prepare("INSERT INTO job_instructions (job_id, content, created_at, sequence) VALUES (?, ?, ?, ?)")
+      .run(jobId, content, createdAt, sequence);
+    return { id: Number(result.lastInsertRowid), jobId, content, createdAt, sequence };
   }
 
   pendingInstructions(jobId: string): JobInstruction[] {
     return this.database
-      .prepare("SELECT id, job_id, content, created_at FROM job_instructions WHERE job_id = ? AND sent_at IS NULL ORDER BY created_at, id")
+      .prepare("SELECT * FROM job_instructions WHERE job_id = ? AND sent_at IS NULL ORDER BY sequence, id")
       .all(jobId)
-      .map((value) => {
-        const row = value as Record<string, string | number>;
-        return { id: Number(row.id), jobId: String(row.job_id), content: String(row.content), createdAt: Number(row.created_at) };
-      });
+      .map((value) => this.instruction(value));
   }
 
   markInstructionSent(id: number): void {
     this.database.prepare("UPDATE job_instructions SET sent_at = ? WHERE id = ?").run(Date.now(), id);
+  }
+
+  activeInstruction(jobId: string): JobInstruction | undefined {
+    const value = this.database
+      .prepare("SELECT * FROM job_instructions WHERE job_id = ? AND sent_at IS NOT NULL AND completed_at IS NULL ORDER BY sent_at DESC, id DESC LIMIT 1")
+      .get(jobId);
+    return value ? this.instruction(value) : undefined;
+  }
+
+  markInstructionCompleted(id: number): void {
+    this.database.prepare("UPDATE job_instructions SET completed_at = ? WHERE id = ?").run(Date.now(), id);
+  }
+
+  clearInterruptAction(jobId: string): void {
+    this.database.prepare("UPDATE jobs SET interrupt_action = NULL WHERE id = ?").run(jobId);
+  }
+
+  createInstructionChoice(jobId: string, content: string, requestedBy: string): InstructionChoice {
+    const choice = { id: randomUUID().slice(0, 8), jobId, content, requestedBy, createdAt: Date.now() };
+    this.database
+      .prepare("INSERT INTO instruction_choices (id, job_id, content, requested_by, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run(choice.id, choice.jobId, choice.content, choice.requestedBy, choice.createdAt);
+    return choice;
+  }
+
+  getInstructionChoice(id: string): InstructionChoice | undefined {
+    const value = this.database.prepare("SELECT * FROM instruction_choices WHERE id = ?").get(id);
+    return value ? this.choice(value) : undefined;
+  }
+
+  resolveInstructionChoice(
+    choiceId: string,
+    action: InstructionAction,
+    requestedBy: string,
+  ): { choice: InstructionChoice; instruction: JobInstruction; job: Job } | undefined {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const value = this.database.prepare("SELECT * FROM instruction_choices WHERE id = ?").get(choiceId);
+      const choice = value ? this.choice(value) : undefined;
+      if (!choice || choice.requestedBy !== requestedBy || choice.resolvedAction) {
+        this.database.exec("ROLLBACK");
+        return undefined;
+      }
+      const job = this.get(choice.jobId);
+      if (!job || job.state !== "running" || !job.sessionId || (job.interruptAction && action !== "queue")) {
+        this.database.exec("ROLLBACK");
+        return undefined;
+      }
+
+      if (action === "replace") {
+        this.database.prepare("DELETE FROM job_instructions WHERE job_id = ? AND sent_at IS NULL").run(job.id);
+      }
+      if (action !== "queue") {
+        this.database
+          .prepare("UPDATE job_instructions SET completed_at = ? WHERE job_id = ? AND sent_at IS NOT NULL AND completed_at IS NULL")
+          .run(Date.now(), job.id);
+      }
+      const sequenceRow = this.database
+        .prepare(action === "queue"
+          ? "SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM job_instructions WHERE job_id = ?"
+          : "SELECT COALESCE(MIN(sequence), 1) - 1 AS sequence FROM job_instructions WHERE job_id = ?")
+        .get(job.id) as { sequence: number };
+      const createdAt = Date.now();
+      const inserted = this.database
+        .prepare("INSERT INTO job_instructions (job_id, content, created_at, sequence) VALUES (?, ?, ?, ?)")
+        .run(job.id, choice.content, createdAt, Number(sequenceRow.sequence));
+      this.database.prepare("UPDATE instruction_choices SET resolved_action = ? WHERE id = ?").run(action, choice.id);
+      if (action !== "queue") {
+        this.database.prepare("UPDATE jobs SET interrupt_action = ?, progress = ? WHERE id = ?")
+          .run(action, `${action === "replace" ? "Replacing" : "Steering"} the active OpenCode prompt.`, job.id);
+      }
+      this.database.exec("COMMIT");
+      const instruction: JobInstruction = {
+        id: Number(inserted.lastInsertRowid),
+        jobId: job.id,
+        content: choice.content,
+        createdAt,
+        sequence: Number(sequenceRow.sequence),
+      };
+      return { choice: { ...choice, resolvedAction: action }, instruction, job: this.get(job.id)! };
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  completeIfIdle(jobId: string, result: string): Job | undefined {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const job = this.get(jobId);
+      const pending = Number((this.database
+        .prepare("SELECT COUNT(*) AS count FROM job_instructions WHERE job_id = ? AND completed_at IS NULL")
+        .get(jobId) as { count: number }).count);
+      if (!job || job.state !== "running" || job.interruptAction || pending) {
+        this.database.exec("ROLLBACK");
+        return undefined;
+      }
+      this.database.prepare(`
+        UPDATE jobs SET state = 'completed', finished_at = ?, result = ?, progress = NULL WHERE id = ?
+      `).run(Date.now(), result, jobId);
+      this.database.exec("COMMIT");
+      return this.get(jobId);
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   close(): void {
@@ -229,6 +396,7 @@ export class JobStore {
       job.error ?? null,
       job.baseCommit ?? null,
       job.progress ?? null,
+      job.interruptAction ?? null,
       job.promptAttempts,
       job.lastPromptAt ?? null,
       job.notified ? 1 : 0,
@@ -256,9 +424,35 @@ export class JobStore {
       ...(row.error !== null ? { error: String(row.error) } : {}),
       ...(row.base_commit ? { baseCommit: String(row.base_commit) } : {}),
       ...(row.progress ? { progress: String(row.progress) } : {}),
+      ...(row.interrupt_action ? { interruptAction: String(row.interrupt_action) as "replace" | "steer" } : {}),
       promptAttempts: Number(row.prompt_attempts),
       ...(row.last_prompt_at ? { lastPromptAt: Number(row.last_prompt_at) } : {}),
       notified: Boolean(row.notified),
+    };
+  }
+
+  private instruction(value: unknown): JobInstruction {
+    const row = value as Record<string, string | number | null>;
+    return {
+      id: Number(row.id),
+      jobId: String(row.job_id),
+      content: String(row.content),
+      createdAt: Number(row.created_at),
+      sequence: Number(row.sequence),
+      ...(row.sent_at ? { sentAt: Number(row.sent_at) } : {}),
+      ...(row.completed_at ? { completedAt: Number(row.completed_at) } : {}),
+    };
+  }
+
+  private choice(value: unknown): InstructionChoice {
+    const row = value as Record<string, string | number | null>;
+    return {
+      id: String(row.id),
+      jobId: String(row.job_id),
+      content: String(row.content),
+      requestedBy: String(row.requested_by),
+      createdAt: Number(row.created_at),
+      ...(row.resolved_action ? { resolvedAction: String(row.resolved_action) as InstructionAction } : {}),
     };
   }
 }

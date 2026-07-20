@@ -173,8 +173,10 @@ describe("OpenCode task lifecycle", () => {
     assert.match(asyncPromptBodies[0] ?? "", /modify files outside the current project/);
     assert.match(asyncPromptBodies[0] ?? "", /Do not access, modify, or delete files in any other project or source repository/);
     assert.doesNotMatch(asyncPromptBodies[0] ?? "", /do not access external directories/i);
-    await service.submitInstruction(process.cwd(), session.sessionId, "use the new API", AbortSignal.timeout(1_000));
+    await service.submitInstruction(process.cwd(), session.sessionId, "use the new API", AbortSignal.timeout(1_000), "msg_instruction_1");
     assert.match(asyncPromptBodies[1] ?? "", /Additional instruction.*use the new API.*BRO_JOB_SUCCESS/s);
+    assert.doesNotMatch(asyncPromptBodies[1] ?? "", /original task/);
+    assert.equal((JSON.parse(asyncPromptBodies[1]!) as { messageID?: string }).messageID, "msg_instruction_1");
 
     sessionStatuses = { ses_async: { type: "busy" } };
     sessionTodos = [

@@ -14,7 +14,7 @@ A lightweight, fully automated coding agent. Just type what you want, and it's d
 That's it — Bro will automatically generate, review, and test the code, then push the commits.
 Job updates use Discord Components v2 status cards. Active jobs include refresh and cancel controls, and running jobs link directly to their OpenCode session and project folder in code-server.
 Running cards show a brief progress report from OpenCode's active todo, assistant text, or current tool and update only when that report changes.
-While a job is running, use **Add instruction** to queue a multiline prompt from a Discord modal; queued instructions persist across restarts.
+While a job is running, add an instruction with **Add instruction**, reply to its status card, or send another request for the same project. Choose **Queue** to run it after successful pending work, **Replace** to stop the active prompt and discard pending instructions, or **Steer** to run it next before preserved pending instructions. Choices and queued instructions persist across restarts.
 
 ## How to deploy?
 

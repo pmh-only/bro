@@ -9,11 +9,18 @@ import {
   type Message,
 } from "discord.js";
 import { hasBotMention, stripBotMention } from "./commands.js";
-import { cardComponents, jobComponents, jobInstructionModal, parseJobButton } from "./components.js";
+import {
+  cardComponents,
+  instructionChoiceComponents,
+  jobComponents,
+  jobInstructionModal,
+  parseInstructionChoice,
+  parseJobButton,
+} from "./components.js";
 import { loadConfig } from "./config.js";
 import { loginWithRetry } from "./discord.js";
 import { committedChangeStats, type ChangeStats, gitHead } from "./git.js";
-import { type Job, JobStore } from "./jobs.js";
+import { type Job, type JobInstruction, JobStore } from "./jobs.js";
 import { terminalJobNotice } from "./notices.js";
 import { OpenCodeService, type TaskResult } from "./opencode.js";
 import { ProjectRegistry } from "./projects.js";
@@ -148,7 +155,19 @@ async function main(): Promise<void> {
 
   let shuttingDown = false;
   let polling: Promise<void> | undefined;
+  let pollRequested = false;
+  let controlsWaiting = 0;
   let pollTimer: NodeJS.Timeout | undefined;
+
+  const publishFinishedJob = async (job: Job) => {
+    await publishJob(job);
+    const notice = terminalJobNotice(job);
+    if (notice && !job.notified) {
+      await notifyJob(job, notice);
+      job.notified = true;
+      jobs.save(job);
+    }
+  };
 
   const finishJob = async (job: Job, state: "completed" | "failed" | "cancelled", result?: string, error?: string) => {
     job.state = state;
@@ -157,13 +176,22 @@ async function main(): Promise<void> {
     if (result !== undefined) job.result = result;
     if (error !== undefined) job.error = error;
     jobs.save(job);
+    await publishFinishedJob(job);
+  };
+
+  const dispatchInstruction = async (job: Job, instruction: JobInstruction) => {
+    job.lastPromptAt = Date.now();
+    job.progress = "Applying the next instruction.";
+    jobs.save(job);
     await publishJob(job);
-    const notice = terminalJobNotice(job);
-    if (notice && !job.notified) {
-      await notifyJob(job, notice);
-      job.notified = true;
-      jobs.save(job);
-    }
+    await opencode.submitInstruction(
+      job.project.directory,
+      job.sessionId!,
+      instruction.content,
+      AbortSignal.timeout(30_000),
+      `msg_bro_${job.id}_${instruction.id}`,
+    );
+    jobs.markInstructionSent(instruction.id);
   };
 
   const pollJob = async (job: Job): Promise<void> => {
@@ -175,23 +203,18 @@ async function main(): Promise<void> {
       return;
     }
     if (!job.sessionId || !job.lastPromptAt) return;
+    if (job.interruptAction) {
+      await opencode.abortTask(job.project.directory, job.sessionId, AbortSignal.timeout(10_000));
+      const instruction = jobs.pendingInstructions(job.id)[0];
+      if (instruction) await dispatchInstruction(job, instruction);
+      jobs.clearInterruptAction(job.id);
+      delete job.interruptAction;
+      return;
+    }
     if (job.startedAt && Date.now() - job.startedAt >= config.taskTimeoutMs) {
       await opencode.abortTask(job.project.directory, job.sessionId, AbortSignal.timeout(10_000)).catch(() => undefined);
       await finishJob(job, "failed", undefined, `OpenCode task timed out after ${Math.round(config.taskTimeoutMs / 60_000)} minutes`);
       return;
-    }
-
-    for (const instruction of jobs.pendingInstructions(job.id)) {
-      job.lastPromptAt = Date.now();
-      job.progress = "Applying an additional instruction.";
-      jobs.save(job);
-      await opencode.submitInstruction(
-        job.project.directory,
-        job.sessionId,
-        instruction.content,
-        AbortSignal.timeout(30_000),
-      );
-      jobs.markInstructionSent(instruction.id);
     }
 
     await opencode.resolvePendingRequests(
@@ -206,6 +229,7 @@ async function main(): Promise<void> {
       job.lastPromptAt,
       AbortSignal.timeout(config.jobPollIntervalMs),
     );
+    if (jobs.get(job.id)?.interruptAction) return;
     if (snapshot.progress && snapshot.progress !== job.progress) {
       job.progress = snapshot.progress;
       jobs.save(job);
@@ -213,7 +237,13 @@ async function main(): Promise<void> {
     }
     if (snapshot.state === "busy") return;
     if (snapshot.successful) {
-      if (jobs.pendingInstructions(job.id).length) return;
+      const activeInstruction = jobs.activeInstruction(job.id);
+      if (activeInstruction) jobs.markInstructionCompleted(activeInstruction.id);
+      const instruction = jobs.pendingInstructions(job.id)[0];
+      if (instruction) {
+        await dispatchInstruction(job, instruction);
+        return;
+      }
       let committed: ChangeStats | undefined;
       if (job.baseCommit) {
         try {
@@ -229,7 +259,8 @@ async function main(): Promise<void> {
         diffs: snapshot.diffs,
         deniedPermissions: [],
       }, committed);
-      await finishJob(job, "completed", result);
+      const completed = jobs.completeIfIdle(job.id, result);
+      if (completed) await publishFinishedJob(completed);
       return;
     }
     if (Date.now() - job.lastPromptAt < config.jobContinueIntervalMs) return;
@@ -239,7 +270,8 @@ async function main(): Promise<void> {
     job.progress = "Continuing unfinished work.";
     if (snapshot.error) job.error = snapshot.error;
     jobs.save(job);
-    await opencode.submitTask(job.project.directory, job.sessionId, job.task, true, AbortSignal.timeout(30_000));
+    const currentTask = jobs.activeInstruction(job.id)?.content ?? job.task;
+    await opencode.submitTask(job.project.directory, job.sessionId, currentTask, true, AbortSignal.timeout(30_000));
     await publishJob(job);
   };
 
@@ -289,15 +321,59 @@ async function main(): Promise<void> {
 
   function pollJobs(): Promise<void> {
     if (shuttingDown) return Promise.resolve();
-    if (!polling) polling = runPoll().finally(() => (polling = undefined));
+    if (polling) {
+      pollRequested = true;
+      return polling;
+    }
+    polling = runPoll().finally(() => {
+      polling = undefined;
+      if (pollRequested && controlsWaiting === 0) {
+        pollRequested = false;
+        void pollJobs();
+      }
+    });
     return polling;
+  }
+
+  async function withPollingPaused<T>(action: () => T): Promise<T> {
+    controlsWaiting += 1;
+    try {
+      while (polling) await polling;
+      return action();
+    } finally {
+      controlsWaiting -= 1;
+      if (controlsWaiting === 0 && pollRequested) {
+        pollRequested = false;
+        void pollJobs();
+      }
+    }
   }
 
   const handleMessage = async (message: Message): Promise<void> => {
     if (shuttingDown) return;
-    if (message.author.bot || !client.user || !hasBotMention(message.content, client.user.id)) return;
+    if (message.author.bot || !client.user) return;
+    const mentioned = hasBotMention(message.content, client.user.id);
+    const referencedJob = message.reference?.messageId
+      ? jobs.runningByMessage(message.reference.channelId ?? message.channelId, message.reference.messageId)
+      : undefined;
+    if (!mentioned && !referencedJob) return;
     if (!authorized(message.guildId, message.channelId, message.author.id, roleIds(message.member))) {
       await reply(message, "You are not authorized to run OpenCode tasks.");
+      return;
+    }
+
+    if (referencedJob) {
+      const instruction = mentioned ? stripBotMention(message.content, client.user.id) : message.content.trim();
+      if (!instruction) {
+        await reply(message, "Reply with the instruction you want OpenCode to apply.");
+        return;
+      }
+      const choice = jobs.createInstructionChoice(referencedJob.id, instruction, message.author.id);
+      await message.reply({
+        components: instructionChoiceComponents(choice.id, referencedJob.id),
+        flags: MessageFlags.IsComponentsV2,
+        allowedMentions: { parse: [], repliedUser: false },
+      });
       return;
     }
 
@@ -361,9 +437,10 @@ async function main(): Promise<void> {
       }
 
       if (intent.action === "cancel") {
-        const job = await jobs.cancel(intent.jobId!);
+        const job = await withPollingPaused(() => jobs.cancel(intent.jobId!));
         if (job) await editJob(statusMessage, job);
         else await editCard(statusMessage, "Job not found", `Active job \`${inline(intent.jobId!)}\` was not found.`);
+        if (job) void pollJobs();
         return;
       }
 
@@ -409,6 +486,15 @@ async function main(): Promise<void> {
       }
 
       if (!task) throw new Error("OpenCode did not identify the project task");
+      const runningJob = jobs.runningForProject(project.directory);
+      if (runningJob) {
+        const choice = jobs.createInstructionChoice(runningJob.id, task, message.author.id);
+        await statusMessage.edit({
+          components: instructionChoiceComponents(choice.id, runningJob.id),
+          allowedMentions: { parse: [] },
+        });
+        return;
+      }
       const job = jobs.enqueue({
         project,
         task,
@@ -444,8 +530,9 @@ async function main(): Promise<void> {
 
   const handleInteraction = (interaction: Interaction): void => {
     if (!interaction.isButton() && !interaction.isModalSubmit()) return;
+    const instructionControl = parseInstructionChoice(interaction.customId);
     const control = parseJobButton(interaction.customId);
-    if (!control) return;
+    if (!control && !instructionControl) return;
 
     void (async () => {
       const roles = interaction.inCachedGuild() ? roleIds(interaction.member) : new Set<string>();
@@ -454,6 +541,39 @@ async function main(): Promise<void> {
         return;
       }
 
+      if (instructionControl) {
+        if (!interaction.isButton()) return;
+        const choice = jobs.getInstructionChoice(instructionControl.choiceId);
+        if (!choice || choice.requestedBy !== interaction.user.id) {
+          await interaction.reply({ content: "Only the user who submitted this instruction can choose its action.", flags: MessageFlags.Ephemeral });
+          return;
+        }
+        await interaction.deferUpdate();
+        const resolved = await withPollingPaused(() => jobs.resolveInstructionChoice(
+          instructionControl.choiceId,
+          instructionControl.action,
+          interaction.user.id,
+        ));
+        if (!resolved) {
+          await interaction.editReply({
+            components: cardComponents("Instruction unavailable", "This choice was already used or its job is no longer running."),
+            allowedMentions: { parse: [] },
+          });
+          return;
+        }
+        await interaction.editReply({
+          components: cardComponents(
+            "Instruction scheduled",
+            `**${instructionControl.action[0]!.toUpperCase()}${instructionControl.action.slice(1)}** selected for job \`${resolved.job.id}\`.`,
+          ),
+          allowedMentions: { parse: [] },
+        });
+        if (instructionControl.action !== "queue") await publishJob(resolved.job);
+        void pollJobs();
+        return;
+      }
+
+      if (!control) return;
       const job = jobs.get(control.jobId);
       if (!job) {
         await interaction.reply({ content: `Job \`${control.jobId}\` was not found.`, flags: MessageFlags.Ephemeral });
@@ -470,9 +590,12 @@ async function main(): Promise<void> {
           await interaction.reply({ content: "Instruction cannot be empty.", flags: MessageFlags.Ephemeral });
           return;
         }
-        jobs.enqueueInstruction(job.id, instruction);
-        await interaction.reply({ content: "Instruction queued for OpenCode.", flags: MessageFlags.Ephemeral });
-        void pollJobs();
+        const choice = jobs.createInstructionChoice(job.id, instruction, interaction.user.id);
+        await interaction.reply({
+          components: instructionChoiceComponents(choice.id, job.id),
+          flags: MessageFlags.Ephemeral | MessageFlags.IsComponentsV2,
+          allowedMentions: { parse: [] },
+        });
         return;
       }
 
@@ -490,11 +613,14 @@ async function main(): Promise<void> {
       }
 
       await interaction.deferUpdate();
-      jobs.cancel(job.id);
-      const current = jobs.get(job.id);
+      const current = await withPollingPaused(() => {
+        jobs.cancel(job.id);
+        return jobs.get(job.id);
+      });
       if (current) {
         await interaction.message.edit({ components: jobComponents(current, formatJob(current), config.codeServerPublicUrl), allowedMentions: { parse: [] } });
       }
+      void pollJobs();
     })().catch(async (error) => {
       console.error("Discord job interaction failed", error);
       const content = `Job action failed: ${error instanceof Error ? error.message : String(error)}`;
@@ -537,7 +663,12 @@ async function main(): Promise<void> {
     await opencode.close();
     throw error;
   }
-  void Promise.all(jobs.active().map((job) => publishJob(job))).then(() => pollJobs());
+  const unfinishedPublications = jobs.history().filter((job) =>
+    job.state === "cancelled" || ((job.state === "completed" || job.state === "failed") && !job.notified));
+  void Promise.all([
+    ...jobs.active().map((job) => publishJob(job)),
+    ...unfinishedPublications.map((job) => publishFinishedJob(job)),
+  ]).then(() => pollJobs());
   pollTimer = setInterval(() => void pollJobs(), config.jobPollIntervalMs);
   pollTimer.unref();
 

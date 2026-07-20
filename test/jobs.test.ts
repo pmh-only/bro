@@ -61,6 +61,7 @@ describe("persistent project jobs", () => {
     job.lastPromptAt = Date.now();
     firstStore.save(job);
     const instruction = firstStore.enqueueInstruction(job.id, "also update the docs");
+    const choice = firstStore.createInstructionChoice(job.id, "then update the examples", "user-1");
     firstStore.close();
 
     const secondStore = new JobStore(path);
@@ -77,22 +78,49 @@ describe("persistent project jobs", () => {
     assert.deepEqual(secondStore.pendingInstructions(job.id).map(({ id, content }) => ({ id, content })), [
       { id: instruction.id, content: "also update the docs" },
     ]);
+    assert.equal(secondStore.resolveInstructionChoice(choice.id, "queue", "user-1")?.instruction.content, "then update the examples");
     secondStore.markInstructionSent(instruction.id);
-    assert.deepEqual(secondStore.pendingInstructions(job.id), []);
+    assert.deepEqual(secondStore.pendingInstructions(job.id).map(({ content }) => content), ["then update the examples"]);
+    const steerChoice = secondStore.createInstructionChoice(job.id, "urgent after restart", "user-1");
+    assert.ok(secondStore.resolveInstructionChoice(steerChoice.id, "steer", "user-1"));
     secondStore.close();
+
+    const thirdStore = new JobStore(path);
+    assert.equal(thirdStore.get(job.id)?.interruptAction, "steer");
+    assert.deepEqual(thirdStore.pendingInstructions(job.id).map(({ content }) => content), [
+      "urgent after restart",
+      "then update the examples",
+    ]);
+    thirdStore.close();
   });
 
   it("migrates an existing jobs database to store Git baselines", async () => {
     const directory = await mkdtemp(join(tmpdir(), "bro-jobs-migration-"));
     temporaryDirectories.push(directory);
     const path = join(directory, "jobs.sqlite");
-    new JobStore(path).close();
+    const legacyStore = new JobStore(path);
+    const legacyJob = enqueue(legacyStore, "active migration");
+    legacyJob.state = "running";
+    legacyJob.sessionId = "ses_migration";
+    legacyStore.save(legacyJob);
+    const earlierInstruction = legacyStore.enqueueInstruction(legacyJob.id, "already superseded");
+    legacyStore.markInstructionSent(earlierInstruction.id);
+    const legacyInstruction = legacyStore.enqueueInstruction(legacyJob.id, "still running");
+    legacyStore.markInstructionSent(legacyInstruction.id);
+    legacyStore.close();
     const oldDatabase = new DatabaseSync(path);
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN base_commit");
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN progress");
+    oldDatabase.exec("ALTER TABLE jobs DROP COLUMN interrupt_action");
+    oldDatabase.exec("DROP INDEX job_instructions_pending");
+    oldDatabase.exec("ALTER TABLE job_instructions DROP COLUMN sequence");
+    oldDatabase.exec("ALTER TABLE job_instructions DROP COLUMN completed_at");
     oldDatabase.close();
 
     const migrated = new JobStore(path);
+    assert.equal(migrated.activeInstruction(legacyJob.id)?.content, "still running");
+    migrated.markInstructionCompleted(legacyInstruction.id);
+    assert.equal(migrated.completeIfIdle(legacyJob.id, "migration complete")?.state, "completed");
     const job = enqueue(migrated, "migrated");
     job.baseCommit = "abcdef";
     job.progress = "Migrated progress";
@@ -100,5 +128,77 @@ describe("persistent project jobs", () => {
     assert.equal(migrated.get(job.id)?.baseCommit, "abcdef");
     assert.equal(migrated.get(job.id)?.progress, "Migrated progress");
     migrated.close();
+  });
+
+  it("resolves queue, replace, and steer choices with durable ordering", () => {
+    const runningStore = (task: string) => {
+      const store = new JobStore(":memory:");
+      const job = enqueue(store, task);
+      job.state = "running";
+      job.sessionId = `ses_${task}`;
+      job.startedAt = Date.now();
+      job.lastPromptAt = Date.now();
+      store.save(job);
+      return { store, job };
+    };
+
+    const queued = runningStore("queue");
+    queued.store.enqueueInstruction(queued.job.id, "first queued");
+    const queueChoice = queued.store.createInstructionChoice(queued.job.id, "last queued", "user-1");
+    assert.equal(queued.store.resolveInstructionChoice(queueChoice.id, "queue", "other-user"), undefined);
+    assert.ok(queued.store.resolveInstructionChoice(queueChoice.id, "queue", "user-1"));
+    assert.deepEqual(queued.store.pendingInstructions(queued.job.id).map(({ content }) => content), ["first queued", "last queued"]);
+    assert.equal(queued.store.get(queued.job.id)?.interruptAction, undefined);
+    assert.equal(queued.store.resolveInstructionChoice(queueChoice.id, "queue", "user-1"), undefined);
+    assert.equal(queued.store.completeIfIdle(queued.job.id, "too early"), undefined);
+    for (const instruction of queued.store.pendingInstructions(queued.job.id)) {
+      queued.store.markInstructionSent(instruction.id);
+      queued.store.markInstructionCompleted(instruction.id);
+    }
+    assert.equal(queued.store.completeIfIdle(queued.job.id, "done")?.state, "completed");
+    queued.store.close();
+
+    const steered = runningStore("steer");
+    const active = steered.store.enqueueInstruction(steered.job.id, "active");
+    steered.store.markInstructionSent(active.id);
+    steered.store.enqueueInstruction(steered.job.id, "queued one");
+    steered.store.enqueueInstruction(steered.job.id, "queued two");
+    const steerChoice = steered.store.createInstructionChoice(steered.job.id, "urgent", "user-1");
+    assert.ok(steered.store.resolveInstructionChoice(steerChoice.id, "steer", "user-1"));
+    assert.equal(steered.store.activeInstruction(steered.job.id), undefined);
+    assert.equal(steered.store.get(steered.job.id)?.interruptAction, "steer");
+    const afterSteerChoice = steered.store.createInstructionChoice(steered.job.id, "queued after steer", "user-1");
+    assert.ok(steered.store.resolveInstructionChoice(afterSteerChoice.id, "queue", "user-1"));
+    assert.deepEqual(steered.store.pendingInstructions(steered.job.id).map(({ content }) => content), [
+      "urgent",
+      "queued one",
+      "queued two",
+      "queued after steer",
+    ]);
+    steered.store.close();
+
+    const replaced = runningStore("replace");
+    const replacedActive = replaced.store.enqueueInstruction(replaced.job.id, "active");
+    replaced.store.markInstructionSent(replacedActive.id);
+    replaced.store.enqueueInstruction(replaced.job.id, "discard me");
+    const replaceChoice = replaced.store.createInstructionChoice(replaced.job.id, "replacement", "user-1");
+    assert.ok(replaced.store.resolveInstructionChoice(replaceChoice.id, "replace", "user-1"));
+    assert.equal(replaced.store.activeInstruction(replaced.job.id), undefined);
+    assert.equal(replaced.store.get(replaced.job.id)?.interruptAction, "replace");
+    assert.deepEqual(replaced.store.pendingInstructions(replaced.job.id).map(({ content }) => content), ["replacement"]);
+    replaced.store.close();
+  });
+
+  it("finds running jobs by project and Discord reply target", () => {
+    const store = new JobStore(":memory:");
+    const job = enqueue(store, "reply target");
+    job.state = "running";
+    job.sessionId = "ses_reply";
+    store.save(job);
+
+    assert.equal(store.runningForProject(project.directory)?.id, job.id);
+    assert.equal(store.runningByMessage(job.channelId, job.messageId)?.id, job.id);
+    assert.equal(store.runningByMessage("other-channel", job.messageId), undefined);
+    store.close();
   });
 });

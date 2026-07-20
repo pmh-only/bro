@@ -8,7 +8,7 @@ import {
   TextInputBuilder,
   TextInputStyle,
 } from "discord.js";
-import type { Job } from "./jobs.js";
+import type { InstructionAction, Job } from "./jobs.js";
 
 interface CardOptions {
   accentColor?: number;
@@ -81,6 +81,31 @@ export function jobInstructionModal(jobId: string): ModalBuilder {
     .setCustomId(`job:prompt:${jobId}`)
     .setTitle("Add job instruction")
     .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input));
+}
+
+export function instructionChoiceComponents(choiceId: string, jobId: string): ContainerBuilder[] {
+  return cardComponents(
+    "Choose instruction action",
+    [
+      `Job \`${jobId}\` is running. How should this instruction be applied?`,
+      "**Queue** — run after the active and queued instructions finish successfully.",
+      "**Replace** — stop the active instruction, discard queued instructions, and run this one.",
+      "**Steer** — stop the active instruction, run this one, then continue queued instructions.",
+    ].join("\n"),
+    {
+      buttons: [
+        new ButtonBuilder().setCustomId(`instruction:queue:${choiceId}`).setLabel("Queue").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`instruction:replace:${choiceId}`).setLabel("Replace").setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId(`instruction:steer:${choiceId}`).setLabel("Steer").setStyle(ButtonStyle.Primary),
+      ],
+    },
+  );
+}
+
+export function parseInstructionChoice(customId: string): { action: InstructionAction; choiceId: string } | undefined {
+  const match = /^instruction:(queue|replace|steer):([a-f0-9]{8})$/.exec(customId);
+  if (!match) return undefined;
+  return { action: match[1] as InstructionAction, choiceId: match[2]! };
 }
 
 export function parseJobButton(customId: string): { action: "refresh" | "prompt" | "cancel"; jobId: string } | undefined {
