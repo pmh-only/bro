@@ -387,6 +387,7 @@ export class OpenCodeService {
       "Always write task and message fields in English. Preserve project aliases, repository URLs, and job IDs exactly.",
       "Return exactly one structured intent using these rules:",
       "- run: start independent parallel work in an existing project. Use an exact alias and preserve the requested work in task.",
+      "- global: apply the same requested change independently to every registered project. Set project to null and preserve the requested work in task.",
       "- instruction: modify exactly one listed parallel job. Set its exact jobId and choose queue, steer, or replace in instructionAction.",
       "- queue: use for non-urgent follow-up work after that job's active and pending instructions succeed.",
       "- steer: interrupt that job, run this next, then preserve its pending instructions.",

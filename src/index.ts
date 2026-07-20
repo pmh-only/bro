@@ -532,6 +532,7 @@ async function main(): Promise<void> {
           [
             "**OpenCode bot**",
             "Mention me with a natural-language request to work in a registered project.",
+            "Ask for a global change to run the same task independently in every registered project.",
             "You can also ask me to clone and register an HTTPS or SSH Git repository, optionally followed by a task.",
             "Ask naturally to list projects, check job status, or cancel a job.",
           ].join("\n"),
@@ -608,6 +609,38 @@ async function main(): Promise<void> {
           `Router selected **${intent.instructionAction}** for parallel job \`${target.id}\` on **${inline(target.project.alias)}**.`,
         );
         if (intent.instructionAction !== "queue") await publishJob(resolved.job);
+        void pollJobs();
+        return;
+      }
+
+      if (intent.action === "global") {
+        const registered = projects.list();
+        if (!registered.length) {
+          await editCard(statusMessage, "No registered projects", "Register at least one project before starting a global job.");
+          return;
+        }
+        if (!intent.task) throw new Error("OpenCode did not identify the global task");
+
+        const globalJobs: Job[] = [];
+        for (const [index, project] of registered.entries()) {
+          const projectMessage = index === 0
+            ? statusMessage
+            : await replyCard(message, "Queueing global job", `Preparing **${inline(project.alias)}**.`);
+          const job = jobs.enqueue({
+            project,
+            task: intent.task,
+            requestedBy: message.author.id,
+            channelId: message.channelId,
+            messageId: projectMessage.id,
+            ...(message.guildId ? { guildId: message.guildId } : {}),
+          });
+          globalJobs.push(job);
+          await editJob(projectMessage, job);
+        }
+        await notifyUser(
+          message,
+          `Global job queued for ${globalJobs.length} project${globalJobs.length === 1 ? "" : "s"}: ${globalJobs.map((job) => `**${inline(job.project.alias)}**`).join(", ")}.`,
+        );
         void pollJobs();
         return;
       }

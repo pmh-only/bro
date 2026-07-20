@@ -40,6 +40,34 @@ describe("natural-language intents", () => {
         }),
       /both the project and task/,
     );
+    assert.throws(
+      () => validateIntent({
+        action: "global",
+        project: null,
+        repository: null,
+        task: null,
+        jobId: null,
+        instructionAction: null,
+        message: null,
+      }),
+      /global task/,
+    );
+  });
+
+  it("accepts a task targeting every registered project", () => {
+    const intent = validateIntent({
+      action: "global",
+      project: null,
+      repository: null,
+      task: "Update the shared license notice",
+      jobId: null,
+      instructionAction: null,
+      message: null,
+    });
+
+    assert.equal(intent.action, "global");
+    assert.equal(intent.project, null);
+    assert.equal(intent.task, "Update the shared license notice");
   });
 
   it("validates a router-selected action and parallel job target", () => {

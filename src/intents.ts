@@ -1,6 +1,6 @@
 import type { InstructionAction } from "./jobs.js";
 
-export type IntentAction = "run" | "instruction" | "clone" | "projects" | "status" | "cancel" | "help" | "unknown";
+export type IntentAction = "run" | "global" | "instruction" | "clone" | "projects" | "status" | "cancel" | "help" | "unknown";
 
 export interface RoutableJob {
   id: string;
@@ -18,7 +18,7 @@ export interface NaturalLanguageIntent {
   message: string | null;
 }
 
-const actions = new Set<IntentAction>(["run", "instruction", "clone", "projects", "status", "cancel", "help", "unknown"]);
+const actions = new Set<IntentAction>(["run", "global", "instruction", "clone", "projects", "status", "cancel", "help", "unknown"]);
 const instructionActions = new Set<InstructionAction>(["queue", "replace", "steer"]);
 
 function nullableString(value: unknown, field: string): string | null {
@@ -55,6 +55,9 @@ export function validateIntent(value: unknown, routableJobs: readonly RoutableJo
   if (intent.action === "run" && (!intent.project || !intent.task)) {
     throw new Error("OpenCode could not identify both the project and task");
   }
+  if (intent.action === "global" && !intent.task) {
+    throw new Error("OpenCode could not identify the global task");
+  }
   if (intent.action === "clone" && (!intent.project || !intent.repository)) {
     throw new Error("OpenCode could not identify both the repository and project name");
   }
@@ -76,7 +79,7 @@ export const intentSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
-    action: { type: "string", enum: ["run", "instruction", "clone", "projects", "status", "cancel", "help", "unknown"] },
+    action: { type: "string", enum: ["run", "global", "instruction", "clone", "projects", "status", "cancel", "help", "unknown"] },
     project: { anyOf: [{ type: "string" }, { type: "null" }] },
     task: { anyOf: [{ type: "string" }, { type: "null" }] },
     repository: { anyOf: [{ type: "string" }, { type: "null" }] },
