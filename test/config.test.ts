@@ -23,6 +23,7 @@ describe("configuration", () => {
     assert.equal(config.jobContinueIntervalMs, 60_000);
     assert.equal(config.webPort, 8_080);
     assert.match(config.jobsDatabase, /jobs\.sqlite$/);
+    assert.match(config.worktreesRoot, /worktrees$/);
   });
 
   it("requires an allowlisted user or role", () => {

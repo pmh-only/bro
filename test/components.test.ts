@@ -21,6 +21,7 @@ function job(state: JobState): Job {
     messageId: "message",
     state,
     createdAt: Date.now(),
+    projectSequence: 1,
     sessionUrl: "https://opencode.example/session/abcd",
     promptAttempts: 1,
     notified: false,

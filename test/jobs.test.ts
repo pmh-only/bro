@@ -25,22 +25,29 @@ afterEach(async () => {
 });
 
 describe("persistent project jobs", () => {
-  it("selects only one queued job per project and supports cancellation", () => {
+  it("selects parallel queued jobs and supports cancellation", () => {
     const store = new JobStore(":memory:");
     const first = enqueue(store, "first");
     const second = enqueue(store, "second");
 
-    assert.deepEqual(store.ready().map((job) => job.id), [first.id]);
+    assert.deepEqual(store.ready().map((job) => job.id), [first.id, second.id]);
     first.state = "running";
     first.startedAt = Date.now();
+    first.worktreeDirectory = "/tmp/worktree-first";
     store.save(first);
-    assert.deepEqual(store.ready(), []);
+    assert.deepEqual(store.ready().map((job) => job.id), [second.id]);
+    second.state = "integrating";
+    store.save(second);
+    assert.equal(store.canIntegrate(second), false);
 
     first.state = "completed";
     first.finishedAt = Date.now();
     store.save(first);
-    assert.deepEqual(store.ready().map((job) => job.id), [second.id]);
-    assert.equal(store.cancel(second.id)?.state, "cancelled");
+    assert.equal(store.canIntegrate(second), true);
+    assert.equal(store.cancel(second.id)?.state, "cancelling");
+    second.state = "cancelled";
+    second.finishedAt = Date.now();
+    store.save(second);
     assert.deepEqual(store.active(), []);
     store.close();
   });
@@ -112,6 +119,12 @@ describe("persistent project jobs", () => {
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN base_commit");
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN progress");
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN interrupt_action");
+    oldDatabase.exec("ALTER TABLE jobs DROP COLUMN worktree_directory");
+    oldDatabase.exec("ALTER TABLE jobs DROP COLUMN worktree_branch");
+    oldDatabase.exec("ALTER TABLE jobs DROP COLUMN target_branch");
+    oldDatabase.exec("ALTER TABLE jobs DROP COLUMN project_sequence");
+    oldDatabase.exec("ALTER TABLE jobs DROP COLUMN integration_base");
+    oldDatabase.exec("ALTER TABLE jobs DROP COLUMN integration_head");
     oldDatabase.exec("DROP INDEX job_instructions_pending");
     oldDatabase.exec("ALTER TABLE job_instructions DROP COLUMN sequence");
     oldDatabase.exec("ALTER TABLE job_instructions DROP COLUMN completed_at");
@@ -120,7 +133,7 @@ describe("persistent project jobs", () => {
     const migrated = new JobStore(path);
     assert.equal(migrated.activeInstruction(legacyJob.id)?.content, "still running");
     migrated.markInstructionCompleted(legacyInstruction.id);
-    assert.equal(migrated.completeIfIdle(legacyJob.id, "migration complete")?.state, "completed");
+    assert.equal(migrated.beginIntegrationIfIdle(legacyJob.id, "migration complete")?.state, "integrating");
     const job = enqueue(migrated, "migrated");
     job.baseCommit = "abcdef";
     job.progress = "Migrated progress";
@@ -150,12 +163,12 @@ describe("persistent project jobs", () => {
     assert.deepEqual(queued.store.pendingInstructions(queued.job.id).map(({ content }) => content), ["first queued", "last queued"]);
     assert.equal(queued.store.get(queued.job.id)?.interruptAction, undefined);
     assert.equal(queued.store.resolveInstructionChoice(queueChoice.id, "queue", "user-1"), undefined);
-    assert.equal(queued.store.completeIfIdle(queued.job.id, "too early"), undefined);
+    assert.equal(queued.store.beginIntegrationIfIdle(queued.job.id, "too early"), undefined);
     for (const instruction of queued.store.pendingInstructions(queued.job.id)) {
       queued.store.markInstructionSent(instruction.id);
       queued.store.markInstructionCompleted(instruction.id);
     }
-    assert.equal(queued.store.completeIfIdle(queued.job.id, "done")?.state, "completed");
+    assert.equal(queued.store.beginIntegrationIfIdle(queued.job.id, "done")?.state, "integrating");
     queued.store.close();
 
     const steered = runningStore("steer");

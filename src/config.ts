@@ -22,6 +22,7 @@ export interface AppConfig {
   jobContinueIntervalMs: number;
   webPort: number;
   jobsDatabase: string;
+  worktreesRoot: string;
   projectsFile: string;
   projectsRoot: string;
 }
@@ -94,6 +95,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const password = env.OPENCODE_PASSWORD?.trim();
   const opencodeModel = model(env.OPENCODE_MODEL);
   const projectsFile = resolve(env.PROJECTS_FILE?.trim() || "projects.json");
+  const jobsDatabase = resolve(env.JOBS_DATABASE?.trim() || join(dirname(projectsFile), "jobs.sqlite"));
   return {
     discordToken: required(env, "DISCORD_TOKEN"),
     allowedUserIds,
@@ -115,7 +117,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     jobPollIntervalMs: positiveInteger(env.JOB_POLL_INTERVAL_MS, 10_000, "JOB_POLL_INTERVAL_MS"),
     jobContinueIntervalMs: positiveInteger(env.JOB_CONTINUE_INTERVAL_MS, 60_000, "JOB_CONTINUE_INTERVAL_MS"),
     webPort: positiveInteger(env.WEB_PORT, 8_080, "WEB_PORT"),
-    jobsDatabase: resolve(env.JOBS_DATABASE?.trim() || join(dirname(projectsFile), "jobs.sqlite")),
+    jobsDatabase,
+    worktreesRoot: resolve(env.WORKTREES_ROOT?.trim() || join(dirname(jobsDatabase), "worktrees")),
     projectsFile,
     projectsRoot: resolve(env.PROJECTS_ROOT?.trim() || "projects"),
   };

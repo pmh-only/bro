@@ -174,6 +174,8 @@ describe("OpenCode task lifecycle", () => {
     assert.match(asyncPromptBodies[0] ?? "", /Do not access, modify, or delete files in any other project or source repository/);
     assert.match(asyncPromptBodies[0] ?? "", /Always process the request in English/);
     assert.match(asyncPromptBodies[0] ?? "", /final response as a concise English summary/);
+    assert.match(asyncPromptBodies[0] ?? "", /coordinator will integrate and push/i);
+    assert.match(asyncPromptBodies[0] ?? "", /Do not pull, push, force-push/);
     assert.doesNotMatch(asyncPromptBodies[0] ?? "", /do not access external directories/i);
     await service.submitInstruction(process.cwd(), session.sessionId, "use the new API", AbortSignal.timeout(1_000), "msg_instruction_1");
     assert.match(asyncPromptBodies[1] ?? "", /Additional instruction.*use the new API.*BRO_JOB_SUCCESS/s);
@@ -235,6 +237,8 @@ describe("OpenCode task lifecycle", () => {
     questions = [{ id: "que_1", sessionID: "ses_async" }];
     await service.resolvePendingRequests(process.cwd(), "ses_async", AbortSignal.timeout(1_000));
     assert.deepEqual(resolvedRequests, ["/permission/per_1/reply", "/question/que_1/reject"]);
+    await service.submitConflictResolution(process.cwd(), "ses_async", ["src/api.ts"], AbortSignal.timeout(1_000));
+    assert.match(asyncPromptBodies[3] ?? "", /rebase.*conflicts.*src\/api\.ts.*rebase --continue.*Do not merge/s);
     await service.close();
   });
 });

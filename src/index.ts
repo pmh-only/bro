@@ -19,7 +19,14 @@ import {
 } from "./components.js";
 import { loadConfig } from "./config.js";
 import { loginWithRetry } from "./discord.js";
-import { committedChangeStats, type ChangeStats, gitHead } from "./git.js";
+import {
+  committedChangeStats,
+  type ChangeStats,
+  discardJobWorktree,
+  integrateJobWorktree,
+  prepareJobWorktree,
+  removeJobWorktree,
+} from "./git.js";
 import { type Job, type JobInstruction, JobStore } from "./jobs.js";
 import { terminalJobNotice } from "./notices.js";
 import { OpenCodeService, type TaskResult } from "./opencode.js";
@@ -55,6 +62,8 @@ function formatJob(job: Job): string {
     return `${heading}${session}${attempts}${progress}`;
   }
   if (job.state === "cancelling") return `${heading}\nStopping the OpenCode session...`;
+  if (job.state === "integrating") return `${heading}\nWaiting for ordered rebase-only integration.`;
+  if (job.state === "conflicted") return `${heading}\nResolving rebase conflicts from earlier parallel work.\n${job.error ?? "Inspecting conflicts."}`;
   if (job.state === "completed") return truncate(`${heading}${elapsed ? ` in ${elapsed}` : ""}\n${job.result || "OpenCode completed without a text response."}`, DISCORD_LIMIT);
   if (job.state === "cancelled") return `${heading}${elapsed ? ` after ${elapsed}` : ""}.`;
   return truncate(`${heading}${elapsed ? ` after ${elapsed}` : ""}\n${job.error || "Unknown error"}`, DISCORD_LIMIT);
@@ -90,6 +99,7 @@ async function main(): Promise<void> {
   const jobs = new JobStore(config.jobsDatabase);
   jobs.resume();
   const requestControllers = new Set<AbortController>();
+  const executionDirectory = (job: Job) => job.worktreeDirectory ?? job.project.directory;
 
   let client: Client;
   let threadServer: Awaited<ReturnType<typeof startThreadServer>> | undefined;
@@ -185,7 +195,7 @@ async function main(): Promise<void> {
     jobs.save(job);
     await publishJob(job);
     await opencode.submitInstruction(
-      job.project.directory,
+      executionDirectory(job),
       job.sessionId!,
       instruction.content,
       AbortSignal.timeout(30_000),
@@ -194,37 +204,126 @@ async function main(): Promise<void> {
     jobs.markInstructionSent(instruction.id);
   };
 
+  const integrateJob = async (job: Job): Promise<void> => {
+    if (!jobs.canIntegrate(job)) return;
+    if (!job.worktreeDirectory || !job.worktreeBranch || !job.targetBranch || !job.baseCommit) {
+      throw new Error(`Job ${job.id} is missing worktree integration metadata`);
+    }
+    const integration = await integrateJobWorktree(
+      job.project.directory,
+      job.worktreeDirectory,
+      job.worktreeBranch,
+      job.targetBranch,
+      job.baseCommit,
+      AbortSignal.timeout(60_000),
+      job.integrationBase && job.integrationHead
+        ? { onto: job.integrationBase, head: job.integrationHead }
+        : undefined,
+      (checkpoint) => {
+        job.integrationBase = checkpoint.onto;
+        job.integrationHead = checkpoint.head;
+        jobs.save(job);
+      },
+    );
+    if (integration.state === "conflicted") {
+      job.state = "conflicted";
+      job.error = `Conflicts: ${integration.conflictFiles?.join(", ") || "rebase continuation required"}`;
+      job.progress = "Resolving rebase conflicts from earlier parallel work.";
+      job.lastPromptAt = Date.now();
+      jobs.save(job);
+      await publishJob(job);
+      await opencode.submitConflictResolution(
+        job.worktreeDirectory,
+        job.sessionId!,
+        integration.conflictFiles ?? [],
+        AbortSignal.timeout(30_000),
+      );
+      return;
+    }
+
+    const committed = await committedChangeStats(
+      job.worktreeDirectory,
+      integration.onto!,
+      AbortSignal.timeout(10_000),
+    );
+    job.integrationBase = integration.onto!;
+    job.integrationHead = integration.head!;
+    job.state = "completed";
+    job.finishedAt = Date.now();
+    job.result = formatResult({
+      sessionId: job.sessionId!,
+      webUrl: job.sessionUrl ?? "",
+      response: job.result ?? "",
+      diffs: [],
+      deniedPermissions: [],
+    }, committed);
+    delete job.progress;
+    delete job.error;
+    jobs.save(job);
+    await publishFinishedJob(job);
+    try {
+      await removeJobWorktree(
+        job.project.directory,
+        job.worktreeDirectory,
+        job.worktreeBranch,
+        AbortSignal.timeout(30_000),
+      );
+    } catch (error) {
+      console.warn(`Unable to clean worktree for completed job ${job.id}`, error);
+    }
+  };
+
   const pollJob = async (job: Job): Promise<void> => {
+    if (job.state === "integrating") {
+      await integrateJob(job);
+      return;
+    }
     if (job.state === "cancelling") {
       if (job.sessionId) {
-        await opencode.abortTask(job.project.directory, job.sessionId, AbortSignal.timeout(10_000));
+        await opencode.abortTask(executionDirectory(job), job.sessionId, AbortSignal.timeout(10_000));
+      }
+      if (job.worktreeDirectory && job.worktreeBranch) {
+        await discardJobWorktree(
+          job.project.directory,
+          job.worktreeDirectory,
+          job.worktreeBranch,
+          AbortSignal.timeout(30_000),
+        );
       }
       await finishJob(job, "cancelled");
       return;
     }
     if (!job.sessionId || !job.lastPromptAt) return;
     if (job.interruptAction) {
-      await opencode.abortTask(job.project.directory, job.sessionId, AbortSignal.timeout(10_000));
+      await opencode.abortTask(executionDirectory(job), job.sessionId, AbortSignal.timeout(10_000));
       const instruction = jobs.pendingInstructions(job.id)[0];
       if (instruction) await dispatchInstruction(job, instruction);
       jobs.clearInterruptAction(job.id);
       delete job.interruptAction;
       return;
     }
-    if (job.startedAt && Date.now() - job.startedAt >= config.taskTimeoutMs) {
-      await opencode.abortTask(job.project.directory, job.sessionId, AbortSignal.timeout(10_000)).catch(() => undefined);
+    if (job.state === "running" && job.startedAt && Date.now() - job.startedAt >= config.taskTimeoutMs) {
+      await opencode.abortTask(executionDirectory(job), job.sessionId, AbortSignal.timeout(10_000)).catch(() => undefined);
+      if (job.worktreeDirectory && job.worktreeBranch) {
+        await discardJobWorktree(
+          job.project.directory,
+          job.worktreeDirectory,
+          job.worktreeBranch,
+          AbortSignal.timeout(30_000),
+        );
+      }
       await finishJob(job, "failed", undefined, `OpenCode task timed out after ${Math.round(config.taskTimeoutMs / 60_000)} minutes`);
       return;
     }
 
     await opencode.resolvePendingRequests(
-      job.project.directory,
+      executionDirectory(job),
       job.sessionId,
       AbortSignal.timeout(config.jobPollIntervalMs),
     );
 
     const snapshot = await opencode.taskSnapshot(
-      job.project.directory,
+      executionDirectory(job),
       job.sessionId,
       job.lastPromptAt,
       AbortSignal.timeout(config.jobPollIntervalMs),
@@ -236,6 +335,24 @@ async function main(): Promise<void> {
       await publishJob(job);
     }
     if (snapshot.state === "busy") return;
+    if (job.state === "conflicted") {
+      if (snapshot.successful) {
+        job.state = "integrating";
+        job.progress = "Rechecking resolved rebase conflicts.";
+        jobs.save(job);
+        await integrateJob(job);
+      } else if (Date.now() - job.lastPromptAt >= config.jobContinueIntervalMs) {
+        job.lastPromptAt = Date.now();
+        jobs.save(job);
+        await opencode.submitConflictResolution(
+          executionDirectory(job),
+          job.sessionId,
+          [],
+          AbortSignal.timeout(30_000),
+        );
+      }
+      return;
+    }
     if (snapshot.successful) {
       const activeInstruction = jobs.activeInstruction(job.id);
       if (activeInstruction) jobs.markInstructionCompleted(activeInstruction.id);
@@ -244,23 +361,26 @@ async function main(): Promise<void> {
         await dispatchInstruction(job, instruction);
         return;
       }
-      let committed: ChangeStats | undefined;
-      if (job.baseCommit) {
-        try {
-          committed = await committedChangeStats(job.project.directory, job.baseCommit, AbortSignal.timeout(10_000));
-        } catch (error) {
-          console.warn(`Unable to calculate committed changes for job ${job.id}`, error);
+      if (!job.worktreeDirectory) {
+        let committed: ChangeStats | undefined;
+        if (job.baseCommit) {
+          committed = await committedChangeStats(job.project.directory, job.baseCommit, AbortSignal.timeout(10_000))
+            .catch(() => undefined);
         }
+        await finishJob(job, "completed", formatResult({
+          sessionId: job.sessionId,
+          webUrl: job.sessionUrl ?? "",
+          response: snapshot.response,
+          diffs: snapshot.diffs,
+          deniedPermissions: [],
+        }, committed));
+        return;
       }
-      const result = formatResult({
-        sessionId: job.sessionId,
-        webUrl: job.sessionUrl ?? "",
-        response: snapshot.response,
-        diffs: snapshot.diffs,
-        deniedPermissions: [],
-      }, committed);
-      const completed = jobs.completeIfIdle(job.id, result);
-      if (completed) await publishFinishedJob(completed);
+      const integrating = jobs.beginIntegrationIfIdle(job.id, snapshot.response);
+      if (integrating) {
+        await publishJob(integrating);
+        await integrateJob(integrating);
+      }
       return;
     }
     if (Date.now() - job.lastPromptAt < config.jobContinueIntervalMs) return;
@@ -271,20 +391,25 @@ async function main(): Promise<void> {
     if (snapshot.error) job.error = snapshot.error;
     jobs.save(job);
     const currentTask = jobs.activeInstruction(job.id)?.content ?? job.task;
-    await opencode.submitTask(job.project.directory, job.sessionId, currentTask, true, AbortSignal.timeout(30_000));
+    await opencode.submitTask(executionDirectory(job), job.sessionId, currentTask, true, AbortSignal.timeout(30_000));
     await publishJob(job);
   };
 
   const startJob = async (job: Job): Promise<void> => {
-    if (!job.baseCommit) {
-      try {
-        job.baseCommit = await gitHead(job.project.directory, AbortSignal.timeout(10_000));
-      } catch (error) {
-        console.warn(`Unable to record Git baseline for job ${job.id}`, error);
-      }
-    }
-    const session = await opencode.ensureTaskSession(
+    const prepared = await prepareJobWorktree(
       job.project.directory,
+      config.worktreesRoot,
+      job.id,
+      AbortSignal.timeout(30_000),
+      job.targetBranch,
+    );
+    job.worktreeDirectory = prepared.directory;
+    job.worktreeBranch = prepared.branch;
+    job.targetBranch = prepared.targetBranch;
+    job.baseCommit ??= prepared.baseCommit;
+    jobs.save(job);
+    const session = await opencode.ensureTaskSession(
+      prepared.directory,
       `Discord: ${truncate(job.task.replace(/\s+/g, " "), 80)}`,
       AbortSignal.timeout(30_000),
     );
@@ -297,7 +422,7 @@ async function main(): Promise<void> {
     job.progress = "Starting OpenCode task.";
     jobs.save(job);
     await publishJob(job);
-    await opencode.submitTask(job.project.directory, job.sessionId, job.task, false, AbortSignal.timeout(30_000));
+    await opencode.submitTask(prepared.directory, job.sessionId, job.task, false, AbortSignal.timeout(30_000));
   };
 
   const runPoll = async (): Promise<void> => {
@@ -306,6 +431,9 @@ async function main(): Promise<void> {
         await pollJob(job);
       } catch (error) {
         console.error(`Unable to poll OpenCode job ${job.id}`, error);
+        job.error = error instanceof Error ? error.message : String(error);
+        jobs.save(job);
+        await publishJob(job);
       }
     }
     for (const job of jobs.ready()) {
@@ -382,9 +510,14 @@ async function main(): Promise<void> {
     requestControllers.add(requestController);
     try {
       const request = stripBotMention(message.content, client.user.id);
+      const routableJobs = jobs.active()
+        .filter((job) => job.state === "running" && job.sessionId
+          && (message.guildId ? job.guildId === message.guildId : !job.guildId && job.channelId === message.channelId))
+        .map((job) => ({ id: job.id, project: job.project.alias, task: job.task }));
       const intent = await opencode.interpretRequest(
         request,
         projects.list().map((project) => project.alias),
+        routableJobs,
         requestController.signal,
       );
       if (shuttingDown) {
@@ -453,6 +586,32 @@ async function main(): Promise<void> {
         return;
       }
 
+      if (intent.action === "instruction") {
+        const target = jobs.get(intent.jobId!);
+        if (!target || target.state !== "running" || !target.sessionId) {
+          await editCard(statusMessage, "Instruction unavailable", `Job \`${inline(intent.jobId!)}\` is no longer accepting instructions.`);
+          return;
+        }
+        const choice = jobs.createInstructionChoice(target.id, intent.task!, message.author.id);
+        const resolved = await withPollingPaused(() => jobs.resolveInstructionChoice(
+          choice.id,
+          intent.instructionAction!,
+          message.author.id,
+        ));
+        if (!resolved) {
+          await editCard(statusMessage, "Instruction unavailable", `Job \`${target.id}\` changed before the instruction could be scheduled.`);
+          return;
+        }
+        await editCard(
+          statusMessage,
+          "Instruction scheduled",
+          `Router selected **${intent.instructionAction}** for parallel job \`${target.id}\` on **${inline(target.project.alias)}**.`,
+        );
+        if (intent.instructionAction !== "queue") await publishJob(resolved.job);
+        void pollJobs();
+        return;
+      }
+
       let project;
       let task = intent.task;
       if (intent.action === "clone") {
@@ -486,15 +645,6 @@ async function main(): Promise<void> {
       }
 
       if (!task) throw new Error("OpenCode did not identify the project task");
-      const runningJob = jobs.runningForProject(project.directory);
-      if (runningJob) {
-        const choice = jobs.createInstructionChoice(runningJob.id, task, message.author.id);
-        await statusMessage.edit({
-          components: instructionChoiceComponents(choice.id, runningJob.id),
-          allowedMentions: { parse: [] },
-        });
-        return;
-      }
       const job = jobs.enqueue({
         project,
         task,
@@ -665,9 +815,17 @@ async function main(): Promise<void> {
   }
   const unfinishedPublications = jobs.history().filter((job) =>
     job.state === "cancelled" || ((job.state === "completed" || job.state === "failed") && !job.notified));
+  const unfinishedCleanups = jobs.history().filter((job) =>
+    job.state === "completed" && job.worktreeDirectory && job.worktreeBranch);
   void Promise.all([
     ...jobs.active().map((job) => publishJob(job)),
     ...unfinishedPublications.map((job) => publishFinishedJob(job)),
+    ...unfinishedCleanups.map((job) => removeJobWorktree(
+      job.project.directory,
+      job.worktreeDirectory!,
+      job.worktreeBranch!,
+      AbortSignal.timeout(30_000),
+    ).catch((error) => console.warn(`Unable to recover worktree cleanup for job ${job.id}`, error))),
   ]).then(() => pollJobs());
   pollTimer = setInterval(() => void pollJobs(), config.jobPollIntervalMs);
   pollTimer.unref();

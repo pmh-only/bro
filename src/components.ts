@@ -19,6 +19,8 @@ const colors = {
   neutral: 0x5865f2,
   queued: 0xfee75c,
   running: 0x5865f2,
+  integrating: 0x5865f2,
+  conflicted: 0xed4245,
   cancelling: 0xfee75c,
   completed: 0x57f287,
   failed: 0xed4245,
@@ -41,19 +43,19 @@ export function jobComponents(job: Job, body: string, codeServerPublicUrl: strin
   if (job.sessionUrl) {
     buttons.push(new ButtonBuilder().setLabel("Open in OpenCode").setStyle(ButtonStyle.Link).setURL(job.sessionUrl));
   }
-  if (job.state === "running") {
+  if (job.state === "running" || job.state === "conflicted") {
     const codeServerUrl = new URL(codeServerPublicUrl);
-    codeServerUrl.searchParams.set("folder", job.project.directory);
+    codeServerUrl.searchParams.set("folder", job.worktreeDirectory ?? job.project.directory);
     buttons.push(
       new ButtonBuilder().setLabel("Open in code-server").setStyle(ButtonStyle.Link).setURL(codeServerUrl.toString()),
     );
   }
-  if (job.state === "queued" || job.state === "running" || job.state === "cancelling") {
+  if (["queued", "running", "integrating", "conflicted", "cancelling"].includes(job.state)) {
     buttons.push(
       new ButtonBuilder().setCustomId(`job:refresh:${job.id}`).setLabel("Refresh").setStyle(ButtonStyle.Secondary),
     );
   }
-  if (job.state === "queued" || job.state === "running") {
+  if (["queued", "running", "integrating", "conflicted"].includes(job.state)) {
     if (job.state === "running") {
       buttons.push(
         new ButtonBuilder().setCustomId(`job:prompt:${job.id}`).setLabel("Add instruction").setStyle(ButtonStyle.Primary),

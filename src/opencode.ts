@@ -6,7 +6,7 @@ import {
   type RequestInit as UndiciRequestInit,
 } from "undici";
 import type { AppConfig } from "./config.js";
-import { intentSchema, type NaturalLanguageIntent, validateIntent } from "./intents.js";
+import { intentSchema, type NaturalLanguageIntent, type RoutableJob, validateIntent } from "./intents.js";
 
 export const opencodeDispatcherOptions = {
   headersTimeout: 0,
@@ -94,6 +94,7 @@ export class OpenCodeService {
   async interpretRequest(
     request: string,
     projectAliases: string[],
+    routableJobs: RoutableJob[],
     externalSignal?: AbortSignal,
   ): Promise<NaturalLanguageIntent> {
     const timeout = AbortSignal.timeout(this.config.routingTimeoutMs);
@@ -122,7 +123,7 @@ export class OpenCodeService {
           ...this.modelSelection(),
           tools: disabledTools,
           format: { type: "json_schema", schema: intentSchema, retryCount: 2 },
-          parts: [{ type: "text", text: this.routingPrompt(request, projectAliases) }],
+          parts: [{ type: "text", text: this.routingPrompt(request, projectAliases, routableJobs) }],
         },
         signal,
       } as unknown as Parameters<typeof client.session.prompt>[0];
@@ -137,7 +138,7 @@ export class OpenCodeService {
         const text = this.textResponse(data?.parts ?? []);
         if (text) structured = JSON.parse(text) as unknown;
       }
-      return validateIntent(structured);
+      return validateIntent(structured, routableJobs);
     } catch (error) {
       if (timeout.aborted && !externalSignal?.aborted) {
         throw new Error(`OpenCode request routing timed out after ${Math.round(this.config.routingTimeoutMs / 1_000)} seconds`);
@@ -170,7 +171,7 @@ export class OpenCodeService {
     const text = continuation
       ? [
           "The persisted Discord job is still incomplete. Continue working on the original task end-to-end.",
-          "Inspect the current repository and session state, finish verification, commit, and push.",
+          "Inspect the current repository and session state, finish verification, and commit all intended changes.",
           ...this.executionRules(),
           ...this.languageRules(),
           `Only when every requested step has succeeded, end your response with ${successMarker}.`,
@@ -216,6 +217,26 @@ export class OpenCodeService {
       },
       signal,
     } as unknown as Parameters<OpencodeClient["session"]["promptAsync"]>[0]);
+  }
+
+  async submitConflictResolution(
+    directory: string,
+    sessionId: string,
+    conflictFiles: string[],
+    signal: AbortSignal,
+  ): Promise<void> {
+    await this.submitInstruction(
+      directory,
+      sessionId,
+      [
+        "A rebase onto changes from an earlier parallel job has conflicts.",
+        `Conflicting files: ${conflictFiles.join(", ") || "inspect git status"}`,
+        "Resolve every conflict while preserving both the earlier integrated behavior and this job's requested behavior.",
+        "Run relevant tests, stage the resolutions, and continue the existing rebase with GIT_EDITOR=true git rebase --continue.",
+        "Resolve every subsequent conflict and recommit as required. Do not merge, abort, skip commits, reset, or push.",
+      ].join("\n"),
+      signal,
+    );
   }
 
   async taskSnapshot(directory: string, sessionId: string, after: number, signal: AbortSignal): Promise<TaskSnapshot> {
@@ -286,7 +307,7 @@ export class OpenCodeService {
       ...this.executionRules(),
       ...this.languageRules(),
       "Make reasonable implementation decisions without asking interactive questions and run relevant verification.",
-      "After completing and verifying the requested work, commit all intended changes and push the current branch to its configured remote.",
+      "After completing and verifying the requested work, commit all intended changes. The coordinator will integrate and push them.",
       "Always include this Git trailer in the commit: Co-authored-by: Bro, the bot <bro@pmh.codes>",
       `Only when every requested step has succeeded, end your response with ${successMarker}.`,
       "",
@@ -299,6 +320,8 @@ export class OpenCodeService {
       "You are authorized to install any required OS packages, databases, CLIs, runtimes, libraries, and services.",
       "You may create or modify files outside the current project when required to complete the task, including system, service, tool, or environment configuration.",
       "Do not access, modify, or delete files in any other project or source repository; keep all application code changes scoped to the current project.",
+      "Work only on the current worktree branch. Do not create, switch, merge, delete branches or worktrees, or initiate a rebase; only continue an existing rebase when explicitly instructed to resolve conflicts.",
+      "Do not pull, push, force-push, or otherwise update remotes; the coordinator performs rebase-only integration.",
     ];
   }
 
@@ -347,13 +370,18 @@ export class OpenCodeService {
     });
   }
 
-  private routingPrompt(request: string, projectAliases: string[]): string {
+  private routingPrompt(request: string, projectAliases: string[], routableJobs: RoutableJob[]): string {
     return [
       "Interpret the authorized Discord user's natural-language request. Do not execute it.",
       "Perform the interpretation in English. Translate non-English input faithfully without changing its meaning.",
       "Always write task and message fields in English. Preserve project aliases, repository URLs, and job IDs exactly.",
       "Return exactly one structured intent using these rules:",
-      "- run: work in an existing project. Use an exact alias from the supplied project list and preserve the requested work in task.",
+      "- run: start independent parallel work in an existing project. Use an exact alias and preserve the requested work in task.",
+      "- instruction: modify exactly one listed parallel job. Set its exact jobId and choose queue, steer, or replace in instructionAction.",
+      "- queue: use for non-urgent follow-up work after that job's active and pending instructions succeed.",
+      "- steer: interrupt that job, run this next, then preserve its pending instructions.",
+      "- replace: use only when the request clearly supersedes that job's active work and pending instructions.",
+      "Never target a job merely because it is the only job in a project. Use instruction only when the request clearly continues or changes that exact job.",
       "- clone: clone and register a Git repository. Set repository to a complete HTTPS or SSH URL, project to the requested friendly name, and task to any work requested after cloning or null.",
       "- projects: list registered projects.",
       "- status: show active jobs or one job. Set jobId when supplied.",
@@ -362,6 +390,7 @@ export class OpenCodeService {
       "- unknown: the request lacks necessary information. Put a concise clarification in message.",
       "Never invent repository URLs, project aliases, job IDs, or implementation tasks.",
       `Registered project aliases: ${JSON.stringify(projectAliases)}`,
+      `Parallel jobs eligible for instructions: ${JSON.stringify(routableJobs)}`,
       `User request: ${JSON.stringify(request)}`,
     ].join("\n");
   }

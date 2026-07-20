@@ -13,6 +13,7 @@ function job(state: JobState): Job {
     messageId: "message",
     state,
     createdAt: Date.now(),
+    projectSequence: 1,
     promptAttempts: 1,
     notified: false,
   };

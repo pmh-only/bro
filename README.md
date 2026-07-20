@@ -14,7 +14,7 @@ A lightweight, fully automated coding agent. Just type what you want, and it's d
 That's it — Bro will automatically generate, review, and test the code, then push the commits.
 Job updates use Discord Components v2 status cards. Active jobs include refresh and cancel controls, and running jobs link directly to their OpenCode session and project folder in code-server.
 Running cards show a brief progress report from OpenCode's active todo, assistant text, or current tool and update only when that report changes.
-While a job is running, add an instruction with **Add instruction**, reply to its status card, or send another request for the same project. Choose **Queue** to run it after successful pending work, **Replace** to stop the active prompt and discard pending instructions, or **Steer** to run it next before preserved pending instructions. Choices and queued instructions persist across restarts.
+Independent jobs run in parallel in isolated Git worktrees. For a new request that clearly modifies an active job, the router selects that exact parallel job and chooses **Queue**, **Replace**, or **Steer**; replies and **Add instruction** retain explicit controls. Choices and queued instructions persist across restarts.
 
 ## How to deploy?
 
@@ -59,7 +59,9 @@ Only the home directory is persistent storage.
 * Provider request timeouts are disabled for the selected OpenCode model, so the bot's task deadline controls long jobs.
 * OpenCode API requests use a dedicated dispatcher without Node's five-minute response timeout.
 * Jobs and Discord status message IDs are stored in SQLite. A periodic poller restores unfinished work after container restarts and asks OpenCode to continue until it reports verified success.
-* Completion cards compare the job's starting Git commit with the final `HEAD`, so committed changes remain visible in file and line statistics.
+* OpenCode commits only inside `bro/job/<job-id>` worktrees. The coordinator serializes integration per project, rebases each later job onto earlier work, rejects merge commits and force pushes, pushes normally, and fast-forwards the canonical branch.
+* Rebase conflicts are returned to the later job's OpenCode session; that job must preserve both changes, test, continue the rebase, and recommit before integration proceeds.
+* Completion cards report changes introduced by the rebased job rather than unrelated parallel commits.
 
 ## Pre-installed MCPs
 My favorite combination of MCPs:

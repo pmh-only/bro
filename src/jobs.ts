@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type { Project } from "./projects.js";
 
-export type JobState = "queued" | "running" | "cancelling" | "completed" | "failed" | "cancelled";
+export type JobState = "queued" | "running" | "integrating" | "conflicted" | "cancelling" | "completed" | "failed" | "cancelled";
 export type InstructionAction = "queue" | "replace" | "steer";
 
 export interface Job {
@@ -24,6 +24,12 @@ export interface Job {
   result?: string;
   error?: string;
   baseCommit?: string;
+  worktreeDirectory?: string;
+  worktreeBranch?: string;
+  targetBranch?: string;
+  projectSequence: number;
+  integrationBase?: string;
+  integrationHead?: string;
   progress?: string;
   interruptAction?: "replace" | "steer";
   promptAttempts: number;
@@ -87,6 +93,12 @@ export class JobStore {
         result TEXT,
         error TEXT,
         base_commit TEXT,
+        worktree_directory TEXT,
+        worktree_branch TEXT,
+        target_branch TEXT,
+        project_sequence INTEGER NOT NULL,
+        integration_base TEXT,
+        integration_head TEXT,
         progress TEXT,
         interrupt_action TEXT,
         prompt_attempts INTEGER NOT NULL DEFAULT 0,
@@ -125,6 +137,31 @@ export class JobStore {
     if (!columns.some((column) => column.name === "interrupt_action")) {
       this.database.exec("ALTER TABLE jobs ADD COLUMN interrupt_action TEXT");
     }
+    if (!columns.some((column) => column.name === "worktree_directory")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN worktree_directory TEXT");
+    }
+    if (!columns.some((column) => column.name === "worktree_branch")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN worktree_branch TEXT");
+    }
+    if (!columns.some((column) => column.name === "target_branch")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN target_branch TEXT");
+    }
+    if (!columns.some((column) => column.name === "project_sequence")) {
+      this.database.exec(`
+        ALTER TABLE jobs ADD COLUMN project_sequence INTEGER;
+        UPDATE jobs SET project_sequence = (
+          SELECT COUNT(*) FROM jobs AS earlier
+          WHERE earlier.project_directory = jobs.project_directory
+            AND (earlier.created_at < jobs.created_at OR (earlier.created_at = jobs.created_at AND earlier.id <= jobs.id))
+        )
+      `);
+    }
+    if (!columns.some((column) => column.name === "integration_base")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN integration_base TEXT");
+    }
+    if (!columns.some((column) => column.name === "integration_head")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN integration_head TEXT");
+    }
     const instructionColumns = this.database.prepare("PRAGMA table_info(job_instructions)").all() as Array<{ name: string }>;
     if (!instructionColumns.some((column) => column.name === "sequence")) {
       this.database.exec("ALTER TABLE job_instructions ADD COLUMN sequence INTEGER; UPDATE job_instructions SET sequence = id");
@@ -147,6 +184,9 @@ export class JobStore {
   }
 
   enqueue(options: EnqueueOptions): Job {
+    const projectSequence = Number((this.database.prepare(
+      "SELECT COALESCE(MAX(project_sequence), 0) + 1 AS sequence FROM jobs WHERE project_directory = ?",
+    ).get(options.project.directory) as { sequence: number }).sequence);
     const job: Job = {
       id: randomUUID().slice(0, 8),
       project: options.project,
@@ -157,6 +197,7 @@ export class JobStore {
       ...(options.guildId ? { guildId: options.guildId } : {}),
       state: "queued",
       createdAt: Date.now(),
+      projectSequence,
       promptAttempts: 0,
       notified: false,
     };
@@ -170,12 +211,16 @@ export class JobStore {
         INSERT INTO jobs (
           id, project_alias, project_directory, task, requested_by, channel_id, message_id, guild_id,
           state, created_at, started_at, finished_at, session_id, session_url, result, error, base_commit, progress,
+          worktree_directory, worktree_branch, target_branch, project_sequence, integration_base, integration_head,
           interrupt_action, prompt_attempts, last_prompt_at, notified
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           state = excluded.state, started_at = excluded.started_at, finished_at = excluded.finished_at,
           session_id = excluded.session_id, session_url = excluded.session_url, result = excluded.result,
           error = excluded.error, base_commit = excluded.base_commit, progress = excluded.progress,
+          worktree_directory = excluded.worktree_directory, worktree_branch = excluded.worktree_branch,
+          target_branch = excluded.target_branch, project_sequence = excluded.project_sequence,
+          integration_base = excluded.integration_base, integration_head = excluded.integration_head,
           interrupt_action = excluded.interrupt_action,
           prompt_attempts = excluded.prompt_attempts,
           last_prompt_at = excluded.last_prompt_at, notified = excluded.notified
@@ -215,26 +260,30 @@ export class JobStore {
   }
 
   resume(): void {
-    this.database.prepare("UPDATE jobs SET started_at = ? WHERE state = 'running'").run(Date.now());
+    this.database.prepare("UPDATE jobs SET started_at = ? WHERE state IN ('running', 'conflicted')").run(Date.now());
   }
 
   ready(): Job[] {
     const active = this.active();
-    const occupied = new Set(
-      active.filter((job) => job.state !== "queued").map((job) => job.project.directory),
-    );
-    const selected = new Set<string>();
-    return active.filter((job) => {
-      if (job.state !== "queued" || occupied.has(job.project.directory) || selected.has(job.project.directory)) return false;
-      selected.add(job.project.directory);
-      return true;
-    });
+    const legacyProjects = new Set(active
+      .filter((job) => job.state !== "queued" && !job.worktreeDirectory)
+      .map((job) => job.project.directory));
+    return active.filter((job) => job.state === "queued" && !legacyProjects.has(job.project.directory));
+  }
+
+  canIntegrate(job: Job): boolean {
+    const earlier = this.database.prepare(`
+      SELECT COUNT(*) AS count FROM jobs
+      WHERE project_directory = ? AND project_sequence < ?
+        AND state NOT IN ('completed', 'failed', 'cancelled')
+    `).get(job.project.directory, job.projectSequence) as { count: number };
+    return Number(earlier.count) === 0;
   }
 
   cancel(id: string): Job | undefined {
     const job = this.get(id);
-    if (!job || terminalStates.has(job.state)) return undefined;
-    if (job.state === "queued") {
+    if (!job || terminalStates.has(job.state) || job.integrationHead) return undefined;
+    if (job.state === "queued" && !job.worktreeDirectory) {
       job.state = "cancelled";
       job.finishedAt = Date.now();
     } else {
@@ -350,7 +399,7 @@ export class JobStore {
     }
   }
 
-  completeIfIdle(jobId: string, result: string): Job | undefined {
+  beginIntegrationIfIdle(jobId: string, result: string): Job | undefined {
     this.database.exec("BEGIN IMMEDIATE");
     try {
       const job = this.get(jobId);
@@ -362,8 +411,8 @@ export class JobStore {
         return undefined;
       }
       this.database.prepare(`
-        UPDATE jobs SET state = 'completed', finished_at = ?, result = ?, progress = NULL WHERE id = ?
-      `).run(Date.now(), result, jobId);
+        UPDATE jobs SET state = 'integrating', result = ?, progress = 'Waiting for rebase-only integration.' WHERE id = ?
+      `).run(result, jobId);
       this.database.exec("COMMIT");
       return this.get(jobId);
     } catch (error) {
@@ -396,6 +445,12 @@ export class JobStore {
       job.error ?? null,
       job.baseCommit ?? null,
       job.progress ?? null,
+      job.worktreeDirectory ?? null,
+      job.worktreeBranch ?? null,
+      job.targetBranch ?? null,
+      job.projectSequence,
+      job.integrationBase ?? null,
+      job.integrationHead ?? null,
       job.interruptAction ?? null,
       job.promptAttempts,
       job.lastPromptAt ?? null,
@@ -424,6 +479,12 @@ export class JobStore {
       ...(row.error !== null ? { error: String(row.error) } : {}),
       ...(row.base_commit ? { baseCommit: String(row.base_commit) } : {}),
       ...(row.progress ? { progress: String(row.progress) } : {}),
+      ...(row.worktree_directory ? { worktreeDirectory: String(row.worktree_directory) } : {}),
+      ...(row.worktree_branch ? { worktreeBranch: String(row.worktree_branch) } : {}),
+      ...(row.target_branch ? { targetBranch: String(row.target_branch) } : {}),
+      projectSequence: Number(row.project_sequence),
+      ...(row.integration_base ? { integrationBase: String(row.integration_base) } : {}),
+      ...(row.integration_head ? { integrationHead: String(row.integration_head) } : {}),
       ...(row.interrupt_action ? { interruptAction: String(row.interrupt_action) as "replace" | "steer" } : {}),
       promptAttempts: Number(row.prompt_attempts),
       ...(row.last_prompt_at ? { lastPromptAt: Number(row.last_prompt_at) } : {}),
