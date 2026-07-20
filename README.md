@@ -51,6 +51,7 @@ Only the home directory is persistent storage.
 ## How it works?
 * The core component of this project is OpenCode.
 * The Discord bot uses OpenCode for NLP and coding tasks.
+* Non-English requests are translated internally; OpenCode plans, progress, prompts, and final summaries are produced in English.
 * System prompts enforce testing and git operations for each job.
 * Jobs may install required OS packages, databases, and services or update system configuration outside the checkout, but must not access other project repositories.
 * Every automated commit includes `Co-authored-by: Bro, the bot <bro@pmh.codes>`.

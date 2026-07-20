@@ -172,6 +172,7 @@ export class OpenCodeService {
           "The persisted Discord job is still incomplete. Continue working on the original task end-to-end.",
           "Inspect the current repository and session state, finish verification, commit, and push.",
           ...this.executionRules(),
+          ...this.languageRules(),
           `Only when every requested step has succeeded, end your response with ${successMarker}.`,
           "",
           task,
@@ -208,6 +209,7 @@ export class OpenCodeService {
           text: [
             "Additional instruction from the authorized Discord user for the current job:",
             instruction,
+            ...this.languageRules(),
             `Only after this instruction is fully completed and verified, end your response with ${successMarker}.`,
           ].join("\n\n"),
         }],
@@ -282,6 +284,7 @@ export class OpenCodeService {
     return [
       "Complete this authorized Discord request end-to-end in the current project.",
       ...this.executionRules(),
+      ...this.languageRules(),
       "Make reasonable implementation decisions without asking interactive questions and run relevant verification.",
       "After completing and verifying the requested work, commit all intended changes and push the current branch to its configured remote.",
       "Always include this Git trailer in the commit: Co-authored-by: Bro, the bot <bro@pmh.codes>",
@@ -296,6 +299,14 @@ export class OpenCodeService {
       "You are authorized to install any required OS packages, databases, CLIs, runtimes, libraries, and services.",
       "You may create or modify files outside the current project when required to complete the task, including system, service, tool, or environment configuration.",
       "Do not access, modify, or delete files in any other project or source repository; keep all application code changes scoped to the current project.",
+    ];
+  }
+
+  private languageRules(): string[] {
+    return [
+      "Always process the request in English, translating non-English input internally before acting on it.",
+      "Write all visible analysis, plans, todo items, tool narration, progress updates, prompts, and summaries in English.",
+      "Write the final response as a concise English summary of the completed work and verification.",
     ];
   }
 
@@ -339,6 +350,8 @@ export class OpenCodeService {
   private routingPrompt(request: string, projectAliases: string[]): string {
     return [
       "Interpret the authorized Discord user's natural-language request. Do not execute it.",
+      "Perform the interpretation in English. Translate non-English input faithfully without changing its meaning.",
+      "Always write task and message fields in English. Preserve project aliases, repository URLs, and job IDs exactly.",
       "Return exactly one structured intent using these rules:",
       "- run: work in an existing project. Use an exact alias from the supplied project list and preserve the requested work in task.",
       "- clone: clone and register a Git repository. Set repository to a complete HTTPS or SSH URL, project to the requested friendly name, and task to any work requested after cloning or null.",

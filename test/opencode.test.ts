@@ -172,10 +172,13 @@ describe("OpenCode task lifecycle", () => {
     assert.match(asyncPromptBodies[0] ?? "", /install any required OS packages, databases, CLIs, runtimes, libraries, and services/);
     assert.match(asyncPromptBodies[0] ?? "", /modify files outside the current project/);
     assert.match(asyncPromptBodies[0] ?? "", /Do not access, modify, or delete files in any other project or source repository/);
+    assert.match(asyncPromptBodies[0] ?? "", /Always process the request in English/);
+    assert.match(asyncPromptBodies[0] ?? "", /final response as a concise English summary/);
     assert.doesNotMatch(asyncPromptBodies[0] ?? "", /do not access external directories/i);
     await service.submitInstruction(process.cwd(), session.sessionId, "use the new API", AbortSignal.timeout(1_000), "msg_instruction_1");
     assert.match(asyncPromptBodies[1] ?? "", /Additional instruction.*use the new API.*BRO_JOB_SUCCESS/s);
     assert.doesNotMatch(asyncPromptBodies[1] ?? "", /original task/);
+    assert.match(asyncPromptBodies[1] ?? "", /progress updates, prompts, and summaries in English/);
     assert.equal((JSON.parse(asyncPromptBodies[1]!) as { messageID?: string }).messageID, "msg_instruction_1");
 
     sessionStatuses = { ses_async: { type: "busy" } };
@@ -219,6 +222,7 @@ describe("OpenCode task lifecycle", () => {
     assert.match(asyncPromptBodies[2] ?? "", /still incomplete/);
     assert.match(asyncPromptBodies[2] ?? "", /install any required OS packages/);
     assert.match(asyncPromptBodies[2] ?? "", /any other project or source repository/);
+    assert.match(asyncPromptBodies[2] ?? "", /Always process the request in English/);
     sessionMessages = [{
       info: { id: "msg_2", sessionID: "ses_async", role: "assistant", parentID: "user_2", time: { created: now + 2 } },
       parts: [{ type: "text", text: "all done\nBRO_JOB_SUCCESS" }],
