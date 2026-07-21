@@ -177,6 +177,8 @@ describe("OpenCode task lifecycle", () => {
     assert.match(asyncPromptBodies[0] ?? "", /Do not access, modify, or delete files in any other project or source repository/);
     assert.match(asyncPromptBodies[0] ?? "", /Always process the request in English/);
     assert.match(asyncPromptBodies[0] ?? "", /final response as a concise English summary/);
+    assert.match(asyncPromptBodies[0] ?? "", /Use OpenCode goal mode.*call create_goal/s);
+    assert.match(asyncPromptBodies[0] ?? "", /call update_goal with status complete.*evidence/s);
     assert.match(asyncPromptBodies[0] ?? "", /coordinator will integrate and push/i);
     assert.match(asyncPromptBodies[0] ?? "", /Do not pull, push, force-push/);
     assert.doesNotMatch(asyncPromptBodies[0] ?? "", /do not access external directories/i);
@@ -184,6 +186,7 @@ describe("OpenCode task lifecycle", () => {
     assert.match(asyncPromptBodies[1] ?? "", /Additional instruction.*use the new API.*BRO_JOB_SUCCESS/s);
     assert.doesNotMatch(asyncPromptBodies[1] ?? "", /original task/);
     assert.match(asyncPromptBodies[1] ?? "", /progress updates, prompts, and summaries in English/);
+    assert.match(asyncPromptBodies[1] ?? "", /Call update_goal_objective.*this instruction.*unfinished original work/);
     assert.equal((JSON.parse(asyncPromptBodies[1]!) as { messageID?: string }).messageID, "msg_instruction_1");
 
     sessionStatuses = { ses_async: { type: "busy" } };
@@ -239,6 +242,8 @@ describe("OpenCode task lifecycle", () => {
     assert.match(asyncPromptBodies[2] ?? "", /install any required OS packages/);
     assert.match(asyncPromptBodies[2] ?? "", /any other project or source repository/);
     assert.match(asyncPromptBodies[2] ?? "", /Always process the request in English/);
+    assert.match(asyncPromptBodies[2] ?? "", /Continue using the existing OpenCode goal/);
+    assert.match(asyncPromptBodies[2] ?? "", /close the goal as complete.*evidence/s);
     await service.submitTask(process.cwd(), "ses_async", "install a system service", false, AbortSignal.timeout(1_000), "global");
     assert.match(asyncPromptBodies[3] ?? "", /one job without a Git worktree/);
     assert.match(asyncPromptBodies[3] ?? "", /environment-wide work and shell actions/);
