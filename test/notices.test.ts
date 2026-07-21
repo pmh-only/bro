@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import type { Job, JobState } from "../src/jobs.js";
-import { terminalJobNotice } from "../src/notices.js";
+import { terminalJobNotice, terminalJobNotification } from "../src/notices.js";
 
 function job(state: JobState): Job {
   return {
@@ -26,8 +26,17 @@ describe("Discord job notices", () => {
     assert.match(terminalJobNotice(job("failed")) ?? "", /failed/);
   });
 
+  it("replies to the completed status card when notifying the requester", () => {
+    assert.deepEqual(terminalJobNotification(job("completed")), {
+      content: "<@1> Job `abcd1234` on **example** completed successfully. See the updated status message for details.",
+      allowedMentions: { parse: [], users: ["1"], repliedUser: false },
+      reply: { messageReference: "message", failIfNotExists: false },
+    });
+  });
+
   it("does not notify for non-terminal progress", () => {
     assert.equal(terminalJobNotice(job("running")), undefined);
     assert.equal(terminalJobNotice(job("cancelled")), undefined);
+    assert.equal(terminalJobNotification(job("running")), undefined);
   });
 });

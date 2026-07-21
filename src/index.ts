@@ -8,6 +8,7 @@ import {
   type GuildMember,
   type Interaction,
   type Message,
+  type MessageCreateOptions,
 } from "discord.js";
 import { hasBotMention, stripBotMention } from "./commands.js";
 import {
@@ -29,7 +30,7 @@ import {
   removeJobWorktree,
 } from "./git.js";
 import { type Job, type JobInstruction, JobStore } from "./jobs.js";
-import { terminalJobNotice } from "./notices.js";
+import { terminalJobNotification } from "./notices.js";
 import { OpenCodeService, type TaskResult } from "./opencode.js";
 import { ProjectRegistry } from "./projects.js";
 import { closeThreadServer, startThreadServer } from "./web.js";
@@ -137,14 +138,11 @@ async function main(): Promise<void> {
     }
   };
 
-  const notifyJob = async (job: Job, content: string): Promise<void> => {
+  const notifyJob = async (job: Job, notification: MessageCreateOptions): Promise<void> => {
     try {
       const channel = await client.channels.fetch(job.channelId);
       if (!channel?.isSendable()) throw new Error("Discord job channel is not sendable");
-      await channel.send({
-        content: `<@${job.requestedBy}> ${truncate(content, DISCORD_LIMIT - 32)}`,
-        allowedMentions: { users: [job.requestedBy] },
-      });
+      await channel.send(notification);
     } catch (error) {
       console.error(`Unable to notify Discord user ${job.requestedBy}`, error);
     }
@@ -177,9 +175,9 @@ async function main(): Promise<void> {
 
   const publishFinishedJob = async (job: Job) => {
     await publishJob(job);
-    const notice = terminalJobNotice(job);
-    if (notice && !job.notified) {
-      await notifyJob(job, notice);
+    const notification = terminalJobNotification(job);
+    if (notification && !job.notified) {
+      await notifyJob(job, notification);
       job.notified = true;
       jobs.save(job);
     }
