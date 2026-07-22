@@ -67,7 +67,11 @@ export function jobComponents(job: Job, body: string, codeServerPublicUrl: strin
   }
 
   const title = `${job.state[0]?.toUpperCase()}${job.state.slice(1)} job`;
-  return cardComponents(title, body, { accentColor: colors[job.state], buttons });
+  const terminal = job.state === "completed" || job.state === "failed" || job.state === "cancelled";
+  const tokenUsage = terminal
+    ? `\n\n**Tokens consumed:** ${job.consumedTokens?.toLocaleString("en-US") ?? "unavailable"}`
+    : "";
+  return cardComponents(title, `${body}${tokenUsage}`, { accentColor: colors[job.state], buttons });
 }
 
 export function jobInstructionModal(jobId: string): ModalBuilder {

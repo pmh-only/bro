@@ -183,7 +183,23 @@ async function main(): Promise<void> {
     }
   };
 
+  const captureTokenUsage = async (job: Job): Promise<void> => {
+    if (!job.sessionId) return;
+    try {
+      job.consumedTokens = await opencode.taskTokenCount(
+        executionDirectory(job),
+        job.sessionId,
+        job.createdAt,
+        AbortSignal.timeout(10_000),
+      );
+    } catch (error) {
+      delete job.consumedTokens;
+      console.warn(`Unable to read token usage for job ${job.id}`, error);
+    }
+  };
+
   const finishJob = async (job: Job, state: "completed" | "failed" | "cancelled", result?: string, error?: string) => {
+    await captureTokenUsage(job);
     job.state = state;
     job.finishedAt = Date.now();
     delete job.progress;
@@ -253,6 +269,7 @@ async function main(): Promise<void> {
     );
     job.integrationBase = integration.onto!;
     job.integrationHead = integration.head!;
+    await captureTokenUsage(job);
     job.state = "completed";
     job.finishedAt = Date.now();
     job.result = formatResult({
@@ -332,8 +349,13 @@ async function main(): Promise<void> {
       job.sessionId,
       job.lastPromptAt,
       AbortSignal.timeout(config.jobPollIntervalMs),
+      job.createdAt,
     );
     if (jobs.get(job.id)?.interruptAction) return;
+    if (snapshot.consumedTokens !== job.consumedTokens) {
+      job.consumedTokens = snapshot.consumedTokens;
+      jobs.save(job);
+    }
     if (snapshot.progress && snapshot.progress !== job.progress) {
       job.progress = snapshot.progress;
       jobs.save(job);

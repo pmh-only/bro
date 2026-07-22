@@ -1,4 +1,12 @@
-import { createOpencodeClient, type FileDiff, type OpencodeClient, type Part, type Session, type Todo } from "@opencode-ai/sdk";
+import {
+  createOpencodeClient,
+  type FileDiff,
+  type Message,
+  type OpencodeClient,
+  type Part,
+  type Session,
+  type Todo,
+} from "@opencode-ai/sdk";
 import {
   Agent,
   fetch as undiciFetch,
@@ -31,6 +39,7 @@ export interface TaskSnapshot {
   state: "busy" | "idle";
   successful: boolean;
   response: string;
+  consumedTokens: number;
   progress?: string;
   error?: string;
   diffs: FileDiff[];
@@ -263,12 +272,19 @@ export class OpenCodeService {
     );
   }
 
-  async taskSnapshot(directory: string, sessionId: string, after: number, signal: AbortSignal): Promise<TaskSnapshot> {
+  async taskSnapshot(
+    directory: string,
+    sessionId: string,
+    after: number,
+    signal: AbortSignal,
+    tokenAfter = 0,
+  ): Promise<TaskSnapshot> {
     const client = this.client(directory);
     const [statuses, messages] = await Promise.all([
       client.session.status({ query: { directory }, signal }),
-      client.session.messages({ path: { id: sessionId }, query: { directory, limit: 20 }, signal }),
+      client.session.messages({ path: { id: sessionId }, query: { directory }, signal }),
     ]);
+    const consumedTokens = this.consumedTokens(messages.data ?? [], tokenAfter);
     const status = statuses.data?.[sessionId];
     const assistant = [...(messages.data ?? [])]
       .reverse()
@@ -281,10 +297,10 @@ export class OpenCodeService {
       : undefined;
     const progress = assistant ? progressReport(todos?.data ?? [], parts) : undefined;
     if (status && status.type !== "idle") {
-      return { state: "busy", successful: false, response: "", ...(progress ? { progress } : {}), diffs: [] };
+      return { state: "busy", successful: false, response: "", consumedTokens, ...(progress ? { progress } : {}), diffs: [] };
     }
     if (!assistant || assistant.info.role !== "assistant") {
-      return { state: "idle", successful: false, response: "", ...(progress ? { progress } : {}), diffs: [] };
+      return { state: "idle", successful: false, response: "", consumedTokens, ...(progress ? { progress } : {}), diffs: [] };
     }
     const response = this.textResponse(assistant.parts);
     const successful = response.includes(successMarker) && !assistant.info.error;
@@ -297,10 +313,20 @@ export class OpenCodeService {
       state: "idle",
       successful,
       response: response.replace(successMarker, "").trim(),
+      consumedTokens,
       ...(progress ? { progress } : {}),
       ...(assistant.info.error ? { error: errorMessage(assistant.info.error.data) } : {}),
       diffs,
     };
+  }
+
+  async taskTokenCount(directory: string, sessionId: string, after: number, signal: AbortSignal): Promise<number> {
+    const messages = await this.client(directory).session.messages({
+      path: { id: sessionId },
+      query: { directory },
+      signal,
+    });
+    return this.consumedTokens(messages.data ?? [], after);
   }
 
   async abortTask(directory: string, sessionId: string, signal: AbortSignal): Promise<void> {
@@ -486,6 +512,21 @@ export class OpenCodeService {
       .map((part) => part.text.trim())
       .filter(Boolean)
       .join("\n\n");
+  }
+
+  private consumedTokens(messages: Array<{ info: Message; parts: Part[] }>, after: number): number {
+    return messages.reduce((total, message) => {
+      if (message.info.role !== "assistant" || message.info.time.created < after) return total;
+      const steps = message.parts.filter((part): part is Extract<Part, { type: "step-finish" }> =>
+        part.type === "step-finish");
+      const usages = steps.length ? steps.map((step) => step.tokens) : [message.info.tokens];
+      return total + usages.reduce((messageTotal, tokens) => messageTotal
+        + (tokens?.input ?? 0)
+        + (tokens?.output ?? 0)
+        + (tokens?.reasoning ?? 0)
+        + (tokens?.cache?.read ?? 0)
+        + (tokens?.cache?.write ?? 0), 0);
+    }, 0);
   }
 
   private sessionUrl(directory: string, sessionId: string): string {

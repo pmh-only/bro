@@ -198,26 +198,43 @@ describe("OpenCode task lifecycle", () => {
       { id: "todo_5", content: "Commit the changes", status: "pending", priority: "high" },
     ];
     sessionMessages = [{
-      info: { id: "msg_old", sessionID: "ses_async", role: "assistant", parentID: "user_old", time: { created: now - 1 } },
+      info: {
+        id: "msg_old", sessionID: "ses_async", role: "assistant", parentID: "user_old", time: { created: now - 1 },
+        tokens: { input: 50_000, output: 10_000, reasoning: 5_000, cache: { read: 20_000, write: 2_000 } },
+      },
       parts: [{ type: "text", text: "previous job" }],
     }];
-    const starting = await service.taskSnapshot(process.cwd(), "ses_async", now, AbortSignal.timeout(1_000));
+    const starting = await service.taskSnapshot(process.cwd(), "ses_async", now, AbortSignal.timeout(1_000), now);
     assert.equal(starting.progress, undefined);
+    assert.equal(starting.consumedTokens, 0);
     assert.equal(todoRequests, 0);
 
     sessionMessages = [{
-      info: { id: "msg_progress", sessionID: "ses_async", role: "assistant", parentID: "user_1", time: { created: now + 1 } },
-      parts: [],
+      info: {
+        id: "msg_progress", sessionID: "ses_async", role: "assistant", parentID: "user_1", time: { created: now + 1 },
+        tokens: { input: 400, output: 100, reasoning: 50, cache: { read: 200, write: 25 } },
+      },
+      parts: [{
+        type: "step-finish",
+        tokens: { input: 600, output: 100, reasoning: 50, cache: { read: 300, write: 25 } },
+      }, {
+        type: "step-finish",
+        tokens: { input: 400, output: 100, reasoning: 50, cache: { read: 200, write: 25 } },
+      }],
     }];
-    const beforeTodoUpdate = await service.taskSnapshot(process.cwd(), "ses_async", now, AbortSignal.timeout(1_000));
+    const beforeTodoUpdate = await service.taskSnapshot(process.cwd(), "ses_async", now, AbortSignal.timeout(1_000), now);
     assert.equal(beforeTodoUpdate.progress, undefined);
+    assert.equal(beforeTodoUpdate.consumedTokens, 1_850);
     assert.equal(todoRequests, 0);
 
     sessionMessages = [{
-      info: { id: "msg_progress", sessionID: "ses_async", role: "assistant", parentID: "user_1", time: { created: now + 1 } },
+      info: {
+        id: "msg_progress", sessionID: "ses_async", role: "assistant", parentID: "user_1", time: { created: now + 1 },
+        tokens: { input: 1_000, output: 200, reasoning: 100, cache: { read: 500, write: 50 } },
+      },
       parts: [{ type: "tool", tool: "todowrite", state: { status: "completed" } }],
     }];
-    const busy = await service.taskSnapshot(process.cwd(), "ses_async", now, AbortSignal.timeout(1_000));
+    const busy = await service.taskSnapshot(process.cwd(), "ses_async", now, AbortSignal.timeout(1_000), now);
     assert.equal(busy.progress, [
       "In progress (2):",
       "- Implement the fix",
@@ -235,7 +252,7 @@ describe("OpenCode task lifecycle", () => {
       info: { id: "msg_1", sessionID: "ses_async", role: "assistant", parentID: "user_1", time: { created: now + 1 } },
       parts: [{ type: "text", text: "not finished" }],
     }];
-    assert.equal((await service.taskSnapshot(process.cwd(), "ses_async", now, AbortSignal.timeout(1_000))).successful, false);
+    assert.equal((await service.taskSnapshot(process.cwd(), "ses_async", now, AbortSignal.timeout(1_000), now)).successful, false);
 
     await service.submitTask(process.cwd(), "ses_async", "finish it", true, AbortSignal.timeout(1_000));
     assert.match(asyncPromptBodies[2] ?? "", /still incomplete/);
@@ -252,12 +269,23 @@ describe("OpenCode task lifecycle", () => {
     await service.submitInstruction(process.cwd(), "ses_async", "adjust the service", AbortSignal.timeout(1_000), undefined, "global");
     assert.match(asyncPromptBodies[4] ?? "", /adjust the service.*Do not access, modify, or delete any registered project/s);
     sessionMessages = [{
-      info: { id: "msg_2", sessionID: "ses_async", role: "assistant", parentID: "user_2", time: { created: now + 2 } },
+      info: {
+        id: "msg_1", sessionID: "ses_async", role: "assistant", parentID: "user_1", time: { created: now + 1 },
+        tokens: { input: 1_000, output: 200, reasoning: 100, cache: { read: 500, write: 50 } },
+      },
+      parts: [{ type: "text", text: "earlier response" }],
+    }, {
+      info: {
+        id: "msg_2", sessionID: "ses_async", role: "assistant", parentID: "user_2", time: { created: now + 2 },
+        tokens: { input: 2_000, output: 400, reasoning: 250, cache: { read: 750, write: 100 } },
+      },
       parts: [{ type: "text", text: "all done\nBRO_JOB_SUCCESS" }],
     }];
-    const snapshot = await service.taskSnapshot(process.cwd(), "ses_async", now, AbortSignal.timeout(1_000));
+    const snapshot = await service.taskSnapshot(process.cwd(), "ses_async", now, AbortSignal.timeout(1_000), now);
     assert.equal(snapshot.successful, true);
     assert.equal(snapshot.response, "all done");
+    assert.equal(snapshot.consumedTokens, 5_350);
+    assert.equal(await service.taskTokenCount(process.cwd(), "ses_async", now, AbortSignal.timeout(1_000)), 5_350);
 
     permissions = [{ id: "per_1", sessionID: "ses_async" }, { id: "per_other", sessionID: "other" }];
     questions = [{ id: "que_1", sessionID: "ses_async" }];

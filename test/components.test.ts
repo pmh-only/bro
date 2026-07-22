@@ -41,7 +41,9 @@ describe("Discord Components v2", () => {
 
   it("adds job actions appropriate for the current state", () => {
     const running = jobComponents(job("running"), "Job details", "https://code.example/base")[0]!.toJSON();
-    const completed = jobComponents(job("completed"), "Job details", "https://code.example/base")[0]!.toJSON();
+    const completedJob = job("completed");
+    completedJob.consumedTokens = 12_345;
+    const completed = jobComponents(completedJob, "Job details", "https://code.example/base")[0]!.toJSON();
     const runningButtons = running.components.flatMap((component) =>
       component.type === ComponentType.ActionRow ? component.components : [],
     );
@@ -65,6 +67,10 @@ describe("Discord Components v2", () => {
       codeServerButton && "url" in codeServerButton ? codeServerButton.url : undefined,
       "https://code.example/base?folder=%2Ftmp%2Fexample",
     );
+    assert.doesNotMatch("content" in running.components[0]! ? running.components[0].content : "", /Tokens consumed/);
+    assert.match("content" in completed.components[0]! ? completed.components[0].content : "", /Tokens consumed:\*\* 12,345/);
+    const failed = jobComponents(job("failed"), "Job details", "https://code.example/base")[0]!.toJSON();
+    assert.match("content" in failed.components[0]! ? failed.components[0].content : "", /Tokens consumed:\*\* unavailable/);
   });
 
   it("parses only supported job button identifiers", () => {

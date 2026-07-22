@@ -96,6 +96,7 @@ describe("persistent project jobs", () => {
     job.sessionUrl = "https://opencode.example/session/ses_persisted";
     job.baseCommit = "0123456789abcdef";
     job.progress = "Implementing persistence";
+    job.consumedTokens = 12_345;
     job.promptAttempts = 1;
     job.lastPromptAt = Date.now();
     firstStore.save(job);
@@ -113,6 +114,7 @@ describe("persistent project jobs", () => {
     assert.equal(restored?.promptAttempts, 1);
     assert.equal(restored?.baseCommit, "0123456789abcdef");
     assert.equal(restored?.progress, "Implementing persistence");
+    assert.equal(restored?.consumedTokens, 12_345);
     assert.ok((restored?.startedAt ?? 0) > 1, "restart should not count container downtime against the task deadline");
     assert.deepEqual(secondStore.pendingInstructions(job.id).map(({ id, content }) => ({ id, content })), [
       { id: instruction.id, content: "also update the docs" },
@@ -158,6 +160,7 @@ describe("persistent project jobs", () => {
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN project_sequence");
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN integration_base");
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN integration_head");
+    oldDatabase.exec("ALTER TABLE jobs DROP COLUMN consumed_tokens");
     oldDatabase.exec("DROP INDEX job_instructions_pending");
     oldDatabase.exec("ALTER TABLE job_instructions DROP COLUMN sequence");
     oldDatabase.exec("ALTER TABLE job_instructions DROP COLUMN completed_at");
@@ -165,6 +168,7 @@ describe("persistent project jobs", () => {
 
     const migrated = new JobStore(path);
     assert.equal(migrated.get(legacyJob.id)?.scope, "project");
+    assert.equal(migrated.get(legacyJob.id)?.consumedTokens, undefined);
     assert.equal(migrated.activeInstruction(legacyJob.id)?.content, "still running");
     migrated.markInstructionCompleted(legacyInstruction.id);
     assert.equal(migrated.beginIntegrationIfIdle(legacyJob.id, "migration complete")?.state, "integrating");

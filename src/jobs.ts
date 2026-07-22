@@ -36,6 +36,7 @@ export interface Job {
   interruptAction?: "replace" | "steer";
   promptAttempts: number;
   lastPromptAt?: number;
+  consumedTokens?: number;
   notified: boolean;
 }
 
@@ -107,6 +108,7 @@ export class JobStore {
         interrupt_action TEXT,
         prompt_attempts INTEGER NOT NULL DEFAULT 0,
         last_prompt_at INTEGER,
+        consumed_tokens INTEGER,
         notified INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX IF NOT EXISTS jobs_state_created ON jobs(state, created_at);
@@ -169,6 +171,9 @@ export class JobStore {
     if (!columns.some((column) => column.name === "integration_head")) {
       this.database.exec("ALTER TABLE jobs ADD COLUMN integration_head TEXT");
     }
+    if (!columns.some((column) => column.name === "consumed_tokens")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN consumed_tokens INTEGER");
+    }
     const instructionColumns = this.database.prepare("PRAGMA table_info(job_instructions)").all() as Array<{ name: string }>;
     if (!instructionColumns.some((column) => column.name === "sequence")) {
       this.database.exec("ALTER TABLE job_instructions ADD COLUMN sequence INTEGER; UPDATE job_instructions SET sequence = id");
@@ -220,8 +225,8 @@ export class JobStore {
           id, scope, project_alias, project_directory, task, requested_by, channel_id, message_id, guild_id,
           state, created_at, started_at, finished_at, session_id, session_url, result, error, base_commit, progress,
           worktree_directory, worktree_branch, target_branch, project_sequence, integration_base, integration_head,
-          interrupt_action, prompt_attempts, last_prompt_at, notified
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          interrupt_action, prompt_attempts, last_prompt_at, consumed_tokens, notified
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           state = excluded.state, started_at = excluded.started_at, finished_at = excluded.finished_at,
           session_id = excluded.session_id, session_url = excluded.session_url, result = excluded.result,
@@ -231,7 +236,8 @@ export class JobStore {
           integration_base = excluded.integration_base, integration_head = excluded.integration_head,
           interrupt_action = excluded.interrupt_action,
           prompt_attempts = excluded.prompt_attempts,
-          last_prompt_at = excluded.last_prompt_at, notified = excluded.notified
+          last_prompt_at = excluded.last_prompt_at, consumed_tokens = excluded.consumed_tokens,
+          notified = excluded.notified
       `)
       .run(...this.values(job));
   }
@@ -296,6 +302,7 @@ export class JobStore {
     if (job.state === "queued" && !job.worktreeDirectory) {
       job.state = "cancelled";
       job.finishedAt = Date.now();
+      job.consumedTokens = 0;
     } else {
       job.state = "cancelling";
     }
@@ -465,6 +472,7 @@ export class JobStore {
       job.interruptAction ?? null,
       job.promptAttempts,
       job.lastPromptAt ?? null,
+      job.consumedTokens ?? null,
       job.notified ? 1 : 0,
     ];
   }
@@ -500,6 +508,7 @@ export class JobStore {
       ...(row.interrupt_action ? { interruptAction: String(row.interrupt_action) as "replace" | "steer" } : {}),
       promptAttempts: Number(row.prompt_attempts),
       ...(row.last_prompt_at ? { lastPromptAt: Number(row.last_prompt_at) } : {}),
+      ...(row.consumed_tokens !== null ? { consumedTokens: Number(row.consumed_tokens) } : {}),
       notified: Boolean(row.notified),
     };
   }
