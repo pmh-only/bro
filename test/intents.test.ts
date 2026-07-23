@@ -12,6 +12,7 @@ describe("natural-language intents", () => {
         task: "create a Node.js hello world and push it",
         jobId: null,
         instructionAction: null,
+        historyVisible: null,
         message: null,
       }),
       {
@@ -21,6 +22,7 @@ describe("natural-language intents", () => {
         task: "create a Node.js hello world and push it",
         jobId: null,
         instructionAction: null,
+        historyVisible: null,
         message: null,
       },
     );
@@ -36,6 +38,7 @@ describe("natural-language intents", () => {
           task: null,
           jobId: null,
           instructionAction: null,
+          historyVisible: null,
           message: null,
         }),
       /both the project and task/,
@@ -48,6 +51,7 @@ describe("natural-language intents", () => {
         task: null,
         jobId: null,
         instructionAction: null,
+        historyVisible: null,
         message: null,
       }),
       /global task/,
@@ -62,6 +66,7 @@ describe("natural-language intents", () => {
       task: "Install the shared system package",
       jobId: null,
       instructionAction: null,
+      historyVisible: null,
       message: null,
     });
 
@@ -79,6 +84,7 @@ describe("natural-language intents", () => {
       task: "Add request tracing",
       jobId: "abcd1234",
       instructionAction: "steer",
+      historyVisible: null,
       message: null,
     }, jobs).instructionAction, "steer");
     assert.throws(() => validateIntent({
@@ -88,6 +94,7 @@ describe("natural-language intents", () => {
       task: "Add request tracing",
       jobId: "ffffffff",
       instructionAction: "queue",
+      historyVisible: null,
       message: null,
     }, jobs), /unavailable instruction target/);
     assert.throws(() => validateIntent({
@@ -97,7 +104,34 @@ describe("natural-language intents", () => {
       task: "Add request tracing",
       jobId: "abcd1234",
       instructionAction: null,
+      historyVisible: null,
       message: null,
     }, jobs), /did not choose queue, steer, or replace/);
+  });
+
+  it("accepts explicit Web UI job history visibility", () => {
+    const hidden = validateIntent({
+      action: "history",
+      project: null,
+      repository: null,
+      task: null,
+      jobId: null,
+      instructionAction: null,
+      historyVisible: false,
+      message: null,
+    });
+
+    assert.equal(hidden.action, "history");
+    assert.equal(hidden.historyVisible, false);
+    assert.throws(() => validateIntent({
+      action: "history",
+      project: null,
+      repository: null,
+      task: null,
+      jobId: null,
+      instructionAction: null,
+      historyVisible: null,
+      message: null,
+    }), /whether to show or hide job history/);
   });
 });

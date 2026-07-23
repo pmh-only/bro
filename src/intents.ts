@@ -1,6 +1,6 @@
 import type { InstructionAction } from "./jobs.js";
 
-export type IntentAction = "run" | "global" | "instruction" | "clone" | "projects" | "status" | "cancel" | "help" | "unknown";
+export type IntentAction = "run" | "global" | "instruction" | "clone" | "projects" | "status" | "cancel" | "history" | "help" | "unknown";
 
 export interface RoutableJob {
   id: string;
@@ -15,10 +15,11 @@ export interface NaturalLanguageIntent {
   repository: string | null;
   jobId: string | null;
   instructionAction: InstructionAction | null;
+  historyVisible: boolean | null;
   message: string | null;
 }
 
-const actions = new Set<IntentAction>(["run", "global", "instruction", "clone", "projects", "status", "cancel", "help", "unknown"]);
+const actions = new Set<IntentAction>(["run", "global", "instruction", "clone", "projects", "status", "cancel", "history", "help", "unknown"]);
 const instructionActions = new Set<InstructionAction>(["queue", "replace", "steer"]);
 
 function nullableString(value: unknown, field: string): string | null {
@@ -26,6 +27,12 @@ function nullableString(value: unknown, field: string): string | null {
   if (typeof value !== "string") throw new Error(`OpenCode returned an invalid ${field}`);
   const trimmed = value.trim();
   return trimmed || null;
+}
+
+function nullableBoolean(value: unknown, field: string): boolean | null {
+  if (value === null) return null;
+  if (typeof value !== "boolean") throw new Error(`OpenCode returned an invalid ${field}`);
+  return value;
 }
 
 export function validateIntent(value: unknown, routableJobs: readonly RoutableJob[] = []): NaturalLanguageIntent {
@@ -45,6 +52,7 @@ export function validateIntent(value: unknown, routableJobs: readonly RoutableJo
     repository: nullableString(candidate.repository, "repository"),
     jobId: nullableString(candidate.jobId, "job ID"),
     instructionAction: nullableString(candidate.instructionAction, "instruction action") as InstructionAction | null,
+    historyVisible: nullableBoolean(candidate.historyVisible, "job history visibility"),
     message: nullableString(candidate.message, "message"),
   };
 
@@ -64,6 +72,9 @@ export function validateIntent(value: unknown, routableJobs: readonly RoutableJo
   if (intent.action === "cancel" && !intent.jobId) {
     throw new Error("OpenCode could not identify the job to cancel");
   }
+  if (intent.action === "history" && intent.historyVisible === null) {
+    throw new Error("OpenCode could not identify whether to show or hide job history");
+  }
   if (intent.action === "instruction") {
     if (!intent.jobId || !intent.task) throw new Error("OpenCode could not identify both the job and instruction");
     if (!intent.instructionAction) throw new Error("OpenCode did not choose queue, steer, or replace for the instruction");
@@ -79,13 +90,14 @@ export const intentSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
-    action: { type: "string", enum: ["run", "global", "instruction", "clone", "projects", "status", "cancel", "help", "unknown"] },
+    action: { type: "string", enum: ["run", "global", "instruction", "clone", "projects", "status", "cancel", "history", "help", "unknown"] },
     project: { anyOf: [{ type: "string" }, { type: "null" }] },
     task: { anyOf: [{ type: "string" }, { type: "null" }] },
     repository: { anyOf: [{ type: "string" }, { type: "null" }] },
     jobId: { anyOf: [{ type: "string" }, { type: "null" }] },
     instructionAction: { anyOf: [{ type: "string", enum: ["queue", "replace", "steer"] }, { type: "null" }] },
+    historyVisible: { anyOf: [{ type: "boolean" }, { type: "null" }] },
     message: { anyOf: [{ type: "string" }, { type: "null" }] },
   },
-  required: ["action", "project", "task", "repository", "jobId", "instructionAction", "message"],
+  required: ["action", "project", "task", "repository", "jobId", "instructionAction", "historyVisible", "message"],
 } as const;

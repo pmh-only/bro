@@ -107,6 +107,8 @@ describe("persistent project jobs", () => {
     const choice = firstStore.createInstructionChoice(job.id, "then update the examples", "user-1", [
       { mime: "image/jpeg", url: "https://cdn.discordapp.com/example.jpg", filename: "example.jpg" },
     ]);
+    assert.equal(firstStore.jobHistoryVisible(), true);
+    firstStore.setJobHistoryVisible(false);
     firstStore.close();
 
     const secondStore = new JobStore(path);
@@ -120,6 +122,7 @@ describe("persistent project jobs", () => {
     assert.equal(restored?.baseCommit, "0123456789abcdef");
     assert.equal(restored?.progress, "Implementing persistence");
     assert.equal(restored?.consumedTokens, 12_345);
+    assert.equal(secondStore.jobHistoryVisible(), false);
     assert.deepEqual(restored?.attachments, [
       { mime: "image/png", url: "https://cdn.discordapp.com/task.png", filename: "task.png" },
     ]);
@@ -139,10 +142,12 @@ describe("persistent project jobs", () => {
     assert.deepEqual(secondStore.pendingInstructions(job.id).map(({ content }) => content), ["then update the examples"]);
     const steerChoice = secondStore.createInstructionChoice(job.id, "urgent after restart", "user-1");
     assert.ok(secondStore.resolveInstructionChoice(steerChoice.id, "steer", "user-1"));
+    secondStore.setJobHistoryVisible(true);
     secondStore.close();
 
     const thirdStore = new JobStore(path);
     assert.equal(thirdStore.get(job.id)?.interruptAction, "steer");
+    assert.equal(thirdStore.jobHistoryVisible(), true);
     assert.deepEqual(thirdStore.pendingInstructions(job.id).map(({ content }) => content), [
       "urgent after restart",
       "then update the examples",

@@ -589,7 +589,7 @@ async function main(): Promise<void> {
             "Mention me with a natural-language request to work in a registered project.",
             "Ask for global environment work or shell actions that are not tied to a project.",
             "You can also ask me to clone and register an HTTPS or SSH Git repository, optionally followed by a task.",
-            "Ask naturally to list projects, check job status, or cancel a job.",
+            "Ask naturally to list projects, check job status, cancel a job, or show and hide Web UI job history.",
           ].join("\n"),
         );
         return;
@@ -632,6 +632,18 @@ async function main(): Promise<void> {
         if (job) await editJob(statusMessage, job);
         else await editCard(statusMessage, "Job not found", `Active job \`${inline(intent.jobId!)}\` was not found.`);
         if (job) void pollJobs();
+        return;
+      }
+
+      if (intent.action === "history") {
+        jobs.setJobHistoryVisible(intent.historyVisible!);
+        await editCard(
+          statusMessage,
+          intent.historyVisible ? "Job history shown" : "Job history hidden",
+          intent.historyVisible
+            ? "Completed, failed, and cancelled jobs are now visible in the Web UI."
+            : "Completed, failed, and cancelled jobs are now hidden from the Web UI.",
+        );
         return;
       }
 

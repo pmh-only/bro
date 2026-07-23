@@ -64,6 +64,22 @@ describe("project thread web server", () => {
     assert.deepEqual(threads[0]?.jobs.map((job) => job.request), ["polish the homepage", "add <script>alert(1)</script>"]);
     assert.equal(await (await fetch(`${baseUrl}/healthz`)).text(), "ok\n");
 
+    store.setJobHistoryVisible(false);
+    const hiddenPage = await (await fetch(baseUrl)).text();
+    assert.match(hiddenPage, /Job history is hidden\. Only active jobs are shown\./);
+    assert.match(hiddenPage, /polish the homepage/);
+    assert.doesNotMatch(hiddenPage, /Implemented safely/);
+    assert.doesNotMatch(hiddenPage, /alert\(1\)/);
+    const visibleThreads = await (await fetch(`${baseUrl}/api/projects`)).json() as Array<{
+      project: string;
+      jobs: Array<{ request: string }>;
+    }>;
+    assert.deepEqual(visibleThreads.map((thread) => thread.project), ["website", "api"]);
+    assert.deepEqual(visibleThreads[0]?.jobs.map((job) => job.request), ["polish the homepage"]);
+
+    store.setJobHistoryVisible(true);
+    assert.match(await (await fetch(baseUrl)).text(), /Implemented safely/);
+
     await closeThreadServer(server);
     store.close();
   });

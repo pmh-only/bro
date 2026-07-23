@@ -472,6 +472,7 @@ export class OpenCodeService {
       "- projects: list registered projects.",
       "- status: show active jobs or one job. Set jobId when supplied.",
       "- cancel: cancel a job and set jobId.",
+      "- history: show or hide completed, failed, and cancelled jobs in the Web UI. Set historyVisible to true to show them or false to hide them.",
       "- help: explain capabilities.",
       "- unknown: the request lacks necessary information. Put a concise clarification in message.",
       "Never invent repository URLs, project aliases, job IDs, or implementation tasks.",

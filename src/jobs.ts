@@ -140,6 +140,10 @@ export class JobStore {
         resolved_action TEXT,
         FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
       );
+      CREATE TABLE IF NOT EXISTS settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
     `);
     const columns = this.database.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
     if (!columns.some((column) => column.name === "scope")) {
@@ -291,6 +295,20 @@ export class JobStore {
       .all(limit)
       .map((row) => this.row(row)!)
       .reverse();
+  }
+
+  jobHistoryVisible(): boolean {
+    const setting = this.database.prepare("SELECT value FROM settings WHERE key = 'job_history_visible'").get() as
+      | { value: string }
+      | undefined;
+    return setting?.value !== "false";
+  }
+
+  setJobHistoryVisible(visible: boolean): void {
+    this.database.prepare(`
+      INSERT INTO settings (key, value) VALUES ('job_history_visible', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(String(visible));
   }
 
   resume(): void {
