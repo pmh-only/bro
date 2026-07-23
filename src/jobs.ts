@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import type { OpenCodeAttachment } from "./attachments.js";
 import type { Project } from "./projects.js";
 
 export type JobState = "queued" | "running" | "integrating" | "conflicted" | "cancelling" | "completed" | "failed" | "cancelled";
@@ -13,6 +14,7 @@ export interface Job {
   scope: JobScope;
   project: Project;
   task: string;
+  attachments: OpenCodeAttachment[];
   requestedBy: string;
   channelId: string;
   messageId: string;
@@ -44,6 +46,7 @@ interface EnqueueOptions {
   scope?: JobScope;
   project: Project;
   task: string;
+  attachments?: OpenCodeAttachment[];
   requestedBy: string;
   channelId: string;
   messageId: string;
@@ -54,6 +57,7 @@ export interface JobInstruction {
   id: number;
   jobId: string;
   content: string;
+  attachments: OpenCodeAttachment[];
   createdAt: number;
   sequence: number;
   sentAt?: number;
@@ -64,6 +68,7 @@ export interface InstructionChoice {
   id: string;
   jobId: string;
   content: string;
+  attachments: OpenCodeAttachment[];
   requestedBy: string;
   createdAt: number;
   resolvedAction?: InstructionAction;
@@ -85,6 +90,7 @@ export class JobStore {
         project_alias TEXT NOT NULL,
         project_directory TEXT NOT NULL,
         task TEXT NOT NULL,
+        attachments TEXT NOT NULL DEFAULT '[]',
         requested_by TEXT NOT NULL,
         channel_id TEXT NOT NULL,
         message_id TEXT NOT NULL,
@@ -116,6 +122,7 @@ export class JobStore {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         job_id TEXT NOT NULL,
         content TEXT NOT NULL,
+        attachments TEXT NOT NULL DEFAULT '[]',
         created_at INTEGER NOT NULL,
         sequence INTEGER NOT NULL,
         sent_at INTEGER,
@@ -127,6 +134,7 @@ export class JobStore {
         id TEXT PRIMARY KEY,
         job_id TEXT NOT NULL,
         content TEXT NOT NULL,
+        attachments TEXT NOT NULL DEFAULT '[]',
         requested_by TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         resolved_action TEXT,
@@ -136,6 +144,9 @@ export class JobStore {
     const columns = this.database.prepare("PRAGMA table_info(jobs)").all() as Array<{ name: string }>;
     if (!columns.some((column) => column.name === "scope")) {
       this.database.exec("ALTER TABLE jobs ADD COLUMN scope TEXT NOT NULL DEFAULT 'project'");
+    }
+    if (!columns.some((column) => column.name === "attachments")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'");
     }
     if (!columns.some((column) => column.name === "base_commit")) {
       this.database.exec("ALTER TABLE jobs ADD COLUMN base_commit TEXT");
@@ -175,6 +186,9 @@ export class JobStore {
       this.database.exec("ALTER TABLE jobs ADD COLUMN consumed_tokens INTEGER");
     }
     const instructionColumns = this.database.prepare("PRAGMA table_info(job_instructions)").all() as Array<{ name: string }>;
+    if (!instructionColumns.some((column) => column.name === "attachments")) {
+      this.database.exec("ALTER TABLE job_instructions ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'");
+    }
     if (!instructionColumns.some((column) => column.name === "sequence")) {
       this.database.exec("ALTER TABLE job_instructions ADD COLUMN sequence INTEGER; UPDATE job_instructions SET sequence = id");
     }
@@ -192,6 +206,10 @@ export class JobStore {
         )
       `);
     }
+    const choiceColumns = this.database.prepare("PRAGMA table_info(instruction_choices)").all() as Array<{ name: string }>;
+    if (!choiceColumns.some((column) => column.name === "attachments")) {
+      this.database.exec("ALTER TABLE instruction_choices ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'");
+    }
     this.database.exec("DROP INDEX job_instructions_pending; CREATE INDEX job_instructions_pending ON job_instructions(job_id, sent_at, sequence)");
   }
 
@@ -204,6 +222,7 @@ export class JobStore {
       scope: options.scope ?? "project",
       project: options.project,
       task: options.task,
+      attachments: options.attachments ?? [],
       requestedBy: options.requestedBy,
       channelId: options.channelId,
       messageId: options.messageId,
@@ -222,12 +241,13 @@ export class JobStore {
     this.database
       .prepare(`
         INSERT INTO jobs (
-          id, scope, project_alias, project_directory, task, requested_by, channel_id, message_id, guild_id,
+          id, scope, project_alias, project_directory, task, attachments, requested_by, channel_id, message_id, guild_id,
           state, created_at, started_at, finished_at, session_id, session_url, result, error, base_commit, progress,
           worktree_directory, worktree_branch, target_branch, project_sequence, integration_base, integration_head,
           interrupt_action, prompt_attempts, last_prompt_at, consumed_tokens, notified
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
+          attachments = excluded.attachments,
           state = excluded.state, started_at = excluded.started_at, finished_at = excluded.finished_at,
           session_id = excluded.session_id, session_url = excluded.session_url, result = excluded.result,
           error = excluded.error, base_commit = excluded.base_commit, progress = excluded.progress,
@@ -310,15 +330,15 @@ export class JobStore {
     return job;
   }
 
-  enqueueInstruction(jobId: string, content: string): JobInstruction {
+  enqueueInstruction(jobId: string, content: string, attachments: OpenCodeAttachment[] = []): JobInstruction {
     const createdAt = Date.now();
     const sequence = Number((this.database
       .prepare("SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence FROM job_instructions WHERE job_id = ?")
       .get(jobId) as { sequence: number }).sequence);
     const result = this.database
-      .prepare("INSERT INTO job_instructions (job_id, content, created_at, sequence) VALUES (?, ?, ?, ?)")
-      .run(jobId, content, createdAt, sequence);
-    return { id: Number(result.lastInsertRowid), jobId, content, createdAt, sequence };
+      .prepare("INSERT INTO job_instructions (job_id, content, attachments, created_at, sequence) VALUES (?, ?, ?, ?, ?)")
+      .run(jobId, content, JSON.stringify(attachments), createdAt, sequence);
+    return { id: Number(result.lastInsertRowid), jobId, content, attachments, createdAt, sequence };
   }
 
   pendingInstructions(jobId: string): JobInstruction[] {
@@ -347,11 +367,16 @@ export class JobStore {
     this.database.prepare("UPDATE jobs SET interrupt_action = NULL WHERE id = ?").run(jobId);
   }
 
-  createInstructionChoice(jobId: string, content: string, requestedBy: string): InstructionChoice {
-    const choice = { id: randomUUID().slice(0, 8), jobId, content, requestedBy, createdAt: Date.now() };
+  createInstructionChoice(
+    jobId: string,
+    content: string,
+    requestedBy: string,
+    attachments: OpenCodeAttachment[] = [],
+  ): InstructionChoice {
+    const choice = { id: randomUUID().slice(0, 8), jobId, content, attachments, requestedBy, createdAt: Date.now() };
     this.database
-      .prepare("INSERT INTO instruction_choices (id, job_id, content, requested_by, created_at) VALUES (?, ?, ?, ?, ?)")
-      .run(choice.id, choice.jobId, choice.content, choice.requestedBy, choice.createdAt);
+      .prepare("INSERT INTO instruction_choices (id, job_id, content, attachments, requested_by, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(choice.id, choice.jobId, choice.content, JSON.stringify(choice.attachments), choice.requestedBy, choice.createdAt);
     return choice;
   }
 
@@ -394,8 +419,8 @@ export class JobStore {
         .get(job.id) as { sequence: number };
       const createdAt = Date.now();
       const inserted = this.database
-        .prepare("INSERT INTO job_instructions (job_id, content, created_at, sequence) VALUES (?, ?, ?, ?)")
-        .run(job.id, choice.content, createdAt, Number(sequenceRow.sequence));
+        .prepare("INSERT INTO job_instructions (job_id, content, attachments, created_at, sequence) VALUES (?, ?, ?, ?, ?)")
+        .run(job.id, choice.content, JSON.stringify(choice.attachments), createdAt, Number(sequenceRow.sequence));
       this.database.prepare("UPDATE instruction_choices SET resolved_action = ? WHERE id = ?").run(action, choice.id);
       if (action !== "queue") {
         this.database.prepare("UPDATE jobs SET interrupt_action = ?, progress = ? WHERE id = ?")
@@ -406,6 +431,7 @@ export class JobStore {
         id: Number(inserted.lastInsertRowid),
         jobId: job.id,
         content: choice.content,
+        attachments: choice.attachments,
         createdAt,
         sequence: Number(sequenceRow.sequence),
       };
@@ -449,6 +475,7 @@ export class JobStore {
       job.project.alias,
       job.project.directory,
       job.task,
+      JSON.stringify(job.attachments),
       job.requestedBy,
       job.channelId,
       job.messageId,
@@ -485,6 +512,7 @@ export class JobStore {
       scope: String(row.scope) as JobScope,
       project: { alias: String(row.project_alias), directory: String(row.project_directory) },
       task: String(row.task),
+      attachments: this.parseAttachments(row.attachments),
       requestedBy: String(row.requested_by),
       channelId: String(row.channel_id),
       messageId: String(row.message_id),
@@ -519,6 +547,7 @@ export class JobStore {
       id: Number(row.id),
       jobId: String(row.job_id),
       content: String(row.content),
+      attachments: this.parseAttachments(row.attachments),
       createdAt: Number(row.created_at),
       sequence: Number(row.sequence),
       ...(row.sent_at ? { sentAt: Number(row.sent_at) } : {}),
@@ -532,9 +561,15 @@ export class JobStore {
       id: String(row.id),
       jobId: String(row.job_id),
       content: String(row.content),
+      attachments: this.parseAttachments(row.attachments),
       requestedBy: String(row.requested_by),
       createdAt: Number(row.created_at),
       ...(row.resolved_action ? { resolvedAction: String(row.resolved_action) as InstructionAction } : {}),
     };
+  }
+
+  private parseAttachments(value: string | number | null | undefined): OpenCodeAttachment[] {
+    if (typeof value !== "string") return [];
+    return JSON.parse(value) as OpenCodeAttachment[];
   }
 }

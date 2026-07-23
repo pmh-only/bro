@@ -10,6 +10,7 @@ import {
   type Message,
   type MessageCreateOptions,
 } from "discord.js";
+import { discordAttachments } from "./attachments.js";
 import { hasBotMention, stripBotMention } from "./commands.js";
 import {
   cardComponents,
@@ -221,6 +222,7 @@ async function main(): Promise<void> {
       AbortSignal.timeout(30_000),
       `msg_bro_${job.id}_${instruction.id}`,
       job.scope,
+      instruction.attachments,
     );
     jobs.markInstructionSent(instruction.id);
   };
@@ -417,8 +419,18 @@ async function main(): Promise<void> {
     job.progress = "Continuing unfinished work.";
     if (snapshot.error) job.error = snapshot.error;
     jobs.save(job);
-    const currentTask = jobs.activeInstruction(job.id)?.content ?? job.task;
-    await opencode.submitTask(executionDirectory(job), job.sessionId, currentTask, true, AbortSignal.timeout(30_000), job.scope);
+    const activeInstruction = jobs.activeInstruction(job.id);
+    const currentTask = activeInstruction?.content ?? job.task;
+    const currentAttachments = activeInstruction?.attachments ?? job.attachments;
+    await opencode.submitTask(
+      executionDirectory(job),
+      job.sessionId,
+      currentTask,
+      true,
+      AbortSignal.timeout(30_000),
+      job.scope,
+      currentAttachments,
+    );
     await publishJob(job);
   };
 
@@ -454,7 +466,15 @@ async function main(): Promise<void> {
     job.progress = "Starting OpenCode task.";
     jobs.save(job);
     await publishJob(job);
-    await opencode.submitTask(directory, job.sessionId, job.task, false, AbortSignal.timeout(30_000), job.scope);
+    await opencode.submitTask(
+      directory,
+      job.sessionId,
+      job.task,
+      false,
+      AbortSignal.timeout(30_000),
+      job.scope,
+      job.attachments,
+    );
   };
 
   const runPoll = async (): Promise<void> => {
@@ -521,14 +541,16 @@ async function main(): Promise<void> {
       await reply(message, "You are not authorized to run OpenCode tasks.");
       return;
     }
+    const attachments = discordAttachments(message.attachments.values());
 
     if (referencedJob) {
-      const instruction = mentioned ? stripBotMention(message.content, client.user.id) : message.content.trim();
+      const instruction = (mentioned ? stripBotMention(message.content, client.user.id) : message.content.trim())
+        || (attachments.length ? "Use the attached file(s) as the instruction." : "");
       if (!instruction) {
         await reply(message, "Reply with the instruction you want OpenCode to apply.");
         return;
       }
-      const choice = jobs.createInstructionChoice(referencedJob.id, instruction, message.author.id);
+      const choice = jobs.createInstructionChoice(referencedJob.id, instruction, message.author.id, attachments);
       await message.reply({
         components: instructionChoiceComponents(choice.id, referencedJob.id),
         flags: MessageFlags.IsComponentsV2,
@@ -551,6 +573,7 @@ async function main(): Promise<void> {
         projects.list().map((project) => project.alias),
         routableJobs,
         requestController.signal,
+        attachments,
       );
       if (shuttingDown) {
         await editCard(statusMessage, "Request stopped", "The bot is shutting down; this request was not started.");
@@ -627,7 +650,7 @@ async function main(): Promise<void> {
           await editCard(statusMessage, "Instruction unavailable", `Job \`${inline(intent.jobId!)}\` is no longer accepting instructions.`);
           return;
         }
-        const choice = jobs.createInstructionChoice(target.id, intent.task!, message.author.id);
+        const choice = jobs.createInstructionChoice(target.id, intent.task!, message.author.id, attachments);
         const resolved = await withPollingPaused(() => jobs.resolveInstructionChoice(
           choice.id,
           intent.instructionAction!,
@@ -653,6 +676,7 @@ async function main(): Promise<void> {
           scope: "global",
           project: globalProject,
           task: intent.task,
+          attachments,
           requestedBy: message.author.id,
           channelId: message.channelId,
           messageId: statusMessage.id,
@@ -699,6 +723,7 @@ async function main(): Promise<void> {
       const job = jobs.enqueue({
         project,
         task,
+        attachments,
         requestedBy: message.author.id,
         channelId: message.channelId,
         messageId: statusMessage.id,

@@ -13,6 +13,7 @@ import {
   type RequestInfo as UndiciRequestInfo,
   type RequestInit as UndiciRequestInit,
 } from "undici";
+import type { OpenCodeAttachment } from "./attachments.js";
 import type { AppConfig } from "./config.js";
 import { intentSchema, type NaturalLanguageIntent, type RoutableJob, validateIntent } from "./intents.js";
 import type { JobScope } from "./jobs.js";
@@ -116,6 +117,7 @@ export class OpenCodeService {
     projectAliases: string[],
     routableJobs: RoutableJob[],
     externalSignal?: AbortSignal,
+    attachments: OpenCodeAttachment[] = [],
   ): Promise<NaturalLanguageIntent> {
     const timeout = AbortSignal.timeout(this.config.routingTimeoutMs);
     const signal = externalSignal ? AbortSignal.any([externalSignal, timeout]) : timeout;
@@ -143,7 +145,7 @@ export class OpenCodeService {
           ...this.modelSelection(),
           tools: disabledTools,
           format: { type: "json_schema", schema: intentSchema, retryCount: 2 },
-          parts: [{ type: "text", text: this.routingPrompt(request, projectAliases, routableJobs) }],
+          parts: this.promptParts(this.routingPrompt(request, projectAliases, routableJobs), attachments),
         },
         signal,
       } as unknown as Parameters<typeof client.session.prompt>[0];
@@ -193,6 +195,7 @@ export class OpenCodeService {
     continuation: boolean,
     signal: AbortSignal,
     scope: JobScope = "project",
+    attachments: OpenCodeAttachment[] = [],
   ): Promise<void> {
     const text = continuation
       ? [
@@ -215,7 +218,7 @@ export class OpenCodeService {
         agent: this.config.opencodeAgent,
         ...this.modelSelection(),
         tools: { question: false },
-        parts: [{ type: "text", text }],
+        parts: this.promptParts(text, attachments),
       },
       signal,
     } as unknown as Parameters<OpencodeClient["session"]["promptAsync"]>[0]);
@@ -228,6 +231,7 @@ export class OpenCodeService {
     signal: AbortSignal,
     messageId?: string,
     scope: JobScope = "project",
+    attachments: OpenCodeAttachment[] = [],
   ): Promise<void> {
     await this.client(directory).session.promptAsync({
       path: { id: sessionId },
@@ -246,7 +250,7 @@ export class OpenCodeService {
             ...this.languageRules(),
             `Only after this instruction is fully completed and verified, end your response with ${successMarker}.`,
           ].join("\n\n"),
-        }],
+        }, ...this.fileParts(attachments)],
       },
       signal,
     } as unknown as Parameters<OpencodeClient["session"]["promptAsync"]>[0]);
@@ -426,6 +430,19 @@ export class OpenCodeService {
         ...(this.config.opencodeReasoningEffort ? { variant: this.config.opencodeReasoningEffort } : {}),
       },
     };
+  }
+
+  private promptParts(text: string, attachments: OpenCodeAttachment[]): Array<Record<string, string>> {
+    return [{ type: "text", text }, ...this.fileParts(attachments)];
+  }
+
+  private fileParts(attachments: OpenCodeAttachment[]): Array<Record<string, string>> {
+    return attachments.map((attachment) => ({
+      type: "file",
+      mime: attachment.mime,
+      url: attachment.url,
+      ...(attachment.filename ? { filename: attachment.filename } : {}),
+    }));
   }
 
   private client(directory: string): OpencodeClient {

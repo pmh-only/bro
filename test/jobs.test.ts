@@ -90,6 +90,7 @@ describe("persistent project jobs", () => {
     const path = join(directory, "jobs.sqlite");
     const firstStore = new JobStore(path);
     const job = enqueue(firstStore, "persisted");
+    job.attachments = [{ mime: "image/png", url: "https://cdn.discordapp.com/task.png", filename: "task.png" }];
     job.state = "running";
     job.startedAt = 1;
     job.sessionId = "ses_persisted";
@@ -100,8 +101,12 @@ describe("persistent project jobs", () => {
     job.promptAttempts = 1;
     job.lastPromptAt = Date.now();
     firstStore.save(job);
-    const instruction = firstStore.enqueueInstruction(job.id, "also update the docs");
-    const choice = firstStore.createInstructionChoice(job.id, "then update the examples", "user-1");
+    const instruction = firstStore.enqueueInstruction(job.id, "also update the docs", [
+      { mime: "text/plain", url: "https://cdn.discordapp.com/docs.txt", filename: "docs.txt" },
+    ]);
+    const choice = firstStore.createInstructionChoice(job.id, "then update the examples", "user-1", [
+      { mime: "image/jpeg", url: "https://cdn.discordapp.com/example.jpg", filename: "example.jpg" },
+    ]);
     firstStore.close();
 
     const secondStore = new JobStore(path);
@@ -115,11 +120,21 @@ describe("persistent project jobs", () => {
     assert.equal(restored?.baseCommit, "0123456789abcdef");
     assert.equal(restored?.progress, "Implementing persistence");
     assert.equal(restored?.consumedTokens, 12_345);
+    assert.deepEqual(restored?.attachments, [
+      { mime: "image/png", url: "https://cdn.discordapp.com/task.png", filename: "task.png" },
+    ]);
     assert.ok((restored?.startedAt ?? 0) > 1, "restart should not count container downtime against the task deadline");
     assert.deepEqual(secondStore.pendingInstructions(job.id).map(({ id, content }) => ({ id, content })), [
       { id: instruction.id, content: "also update the docs" },
     ]);
-    assert.equal(secondStore.resolveInstructionChoice(choice.id, "queue", "user-1")?.instruction.content, "then update the examples");
+    assert.deepEqual(secondStore.pendingInstructions(job.id)[0]?.attachments, [
+      { mime: "text/plain", url: "https://cdn.discordapp.com/docs.txt", filename: "docs.txt" },
+    ]);
+    const resolvedChoice = secondStore.resolveInstructionChoice(choice.id, "queue", "user-1")?.instruction;
+    assert.equal(resolvedChoice?.content, "then update the examples");
+    assert.deepEqual(resolvedChoice?.attachments, [
+      { mime: "image/jpeg", url: "https://cdn.discordapp.com/example.jpg", filename: "example.jpg" },
+    ]);
     secondStore.markInstructionSent(instruction.id);
     assert.deepEqual(secondStore.pendingInstructions(job.id).map(({ content }) => content), ["then update the examples"]);
     const steerChoice = secondStore.createInstructionChoice(job.id, "urgent after restart", "user-1");
@@ -161,14 +176,18 @@ describe("persistent project jobs", () => {
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN integration_base");
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN integration_head");
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN consumed_tokens");
+    oldDatabase.exec("ALTER TABLE jobs DROP COLUMN attachments");
     oldDatabase.exec("DROP INDEX job_instructions_pending");
     oldDatabase.exec("ALTER TABLE job_instructions DROP COLUMN sequence");
     oldDatabase.exec("ALTER TABLE job_instructions DROP COLUMN completed_at");
+    oldDatabase.exec("ALTER TABLE job_instructions DROP COLUMN attachments");
+    oldDatabase.exec("ALTER TABLE instruction_choices DROP COLUMN attachments");
     oldDatabase.close();
 
     const migrated = new JobStore(path);
     assert.equal(migrated.get(legacyJob.id)?.scope, "project");
     assert.equal(migrated.get(legacyJob.id)?.consumedTokens, undefined);
+    assert.deepEqual(migrated.get(legacyJob.id)?.attachments, []);
     assert.equal(migrated.activeInstruction(legacyJob.id)?.content, "still running");
     migrated.markInstructionCompleted(legacyInstruction.id);
     assert.equal(migrated.beginIntegrationIfIdle(legacyJob.id, "migration complete")?.state, "integrating");

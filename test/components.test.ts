@@ -17,6 +17,7 @@ function job(state: JobState): Job {
     scope: "project",
     project: { alias: "example", directory: "/tmp/example" },
     task: "test",
+    attachments: [],
     requestedBy: "1",
     channelId: "channel",
     messageId: "message",
