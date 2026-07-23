@@ -172,7 +172,7 @@ describe("OpenCode task lifecycle", () => {
     assert.equal(createRequests, 1);
     const attachment = {
       mime: "image/png",
-      url: "https://cdn.discordapp.com/attachments/mockup.png",
+      url: "data:image/png;base64,bW9ja3Vw",
       filename: "mockup.png",
     };
     await service.submitTask(
@@ -198,7 +198,7 @@ describe("OpenCode task lifecycle", () => {
     assert.deepEqual((JSON.parse(asyncPromptBodies[0]!) as { parts: unknown[] }).parts.at(-1), {
       type: "file",
       mime: "image/png",
-      url: "https://cdn.discordapp.com/attachments/mockup.png",
+      url: "data:image/png;base64,bW9ja3Vw",
       filename: "mockup.png",
     });
     await service.submitInstruction(
@@ -218,7 +218,7 @@ describe("OpenCode task lifecycle", () => {
     assert.deepEqual((JSON.parse(asyncPromptBodies[1]!) as { parts: unknown[] }).parts.at(-1), {
       type: "file",
       mime: "image/png",
-      url: "https://cdn.discordapp.com/attachments/mockup.png",
+      url: "data:image/png;base64,bW9ja3Vw",
       filename: "mockup.png",
     });
 

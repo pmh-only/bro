@@ -541,7 +541,7 @@ async function main(): Promise<void> {
       await reply(message, "You are not authorized to run OpenCode tasks.");
       return;
     }
-    const attachments = discordAttachments(message.attachments.values());
+    const attachments = await discordAttachments(message.attachments.values());
 
     if (referencedJob) {
       const instruction = (mentioned ? stripBotMention(message.content, client.user.id) : message.content.trim())
