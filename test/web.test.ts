@@ -80,6 +80,21 @@ describe("project thread web server", () => {
     store.setJobHistoryVisible(true);
     assert.match(await (await fetch(baseUrl)).text(), /Implemented safely/);
 
+    assert.equal(store.setJobHidden(first.id, true)?.hidden, true);
+    const specificallyHiddenPage = await (await fetch(`${baseUrl}/?project=website`)).text();
+    assert.match(specificallyHiddenPage, /polish the homepage/);
+    assert.doesNotMatch(specificallyHiddenPage, /Implemented safely/);
+    assert.doesNotMatch(specificallyHiddenPage, /alert\(1\)/);
+    const specificallyVisibleThreads = await (await fetch(`${baseUrl}/api/projects`)).json() as Array<{
+      project: string;
+      jobs: Array<{ id: string }>;
+    }>;
+    assert.ok(specificallyVisibleThreads.flatMap((thread) => thread.jobs).every((job) => job.id !== first.id));
+    assert.equal(store.get(first.id)?.task, "add <script>alert(1)</script>");
+
+    store.setJobHidden(first.id, false);
+    assert.match(await (await fetch(`${baseUrl}/?project=website`)).text(), /Implemented safely/);
+
     await closeThreadServer(server);
     store.close();
   });

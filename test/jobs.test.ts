@@ -108,6 +108,8 @@ describe("persistent project jobs", () => {
       { mime: "image/jpeg", url: "https://cdn.discordapp.com/example.jpg", filename: "example.jpg" },
     ]);
     assert.equal(firstStore.jobHistoryVisible(), true);
+    assert.equal(job.hidden, false);
+    assert.equal(firstStore.setJobHidden(job.id.toUpperCase(), true)?.hidden, true);
     firstStore.setJobHistoryVisible(false);
     firstStore.close();
 
@@ -123,6 +125,7 @@ describe("persistent project jobs", () => {
     assert.equal(restored?.progress, "Implementing persistence");
     assert.equal(restored?.consumedTokens, 12_345);
     assert.equal(secondStore.jobHistoryVisible(), false);
+    assert.equal(restored?.hidden, true);
     assert.deepEqual(restored?.attachments, [
       { mime: "image/png", url: "https://cdn.discordapp.com/task.png", filename: "task.png" },
     ]);
@@ -143,11 +146,13 @@ describe("persistent project jobs", () => {
     const steerChoice = secondStore.createInstructionChoice(job.id, "urgent after restart", "user-1");
     assert.ok(secondStore.resolveInstructionChoice(steerChoice.id, "steer", "user-1"));
     secondStore.setJobHistoryVisible(true);
+    assert.equal(secondStore.setJobHidden(job.id, false)?.hidden, false);
     secondStore.close();
 
     const thirdStore = new JobStore(path);
     assert.equal(thirdStore.get(job.id)?.interruptAction, "steer");
     assert.equal(thirdStore.jobHistoryVisible(), true);
+    assert.equal(thirdStore.get(job.id)?.hidden, false);
     assert.deepEqual(thirdStore.pendingInstructions(job.id).map(({ content }) => content), [
       "urgent after restart",
       "then update the examples",
@@ -182,6 +187,7 @@ describe("persistent project jobs", () => {
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN integration_head");
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN consumed_tokens");
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN attachments");
+    oldDatabase.exec("ALTER TABLE jobs DROP COLUMN hidden");
     oldDatabase.exec("DROP INDEX job_instructions_pending");
     oldDatabase.exec("ALTER TABLE job_instructions DROP COLUMN sequence");
     oldDatabase.exec("ALTER TABLE job_instructions DROP COLUMN completed_at");
@@ -193,6 +199,7 @@ describe("persistent project jobs", () => {
     assert.equal(migrated.get(legacyJob.id)?.scope, "project");
     assert.equal(migrated.get(legacyJob.id)?.consumedTokens, undefined);
     assert.deepEqual(migrated.get(legacyJob.id)?.attachments, []);
+    assert.equal(migrated.get(legacyJob.id)?.hidden, false);
     assert.equal(migrated.activeInstruction(legacyJob.id)?.content, "still running");
     migrated.markInstructionCompleted(legacyInstruction.id);
     assert.equal(migrated.beginIntegrationIfIdle(legacyJob.id, "migration complete")?.state, "integrating");

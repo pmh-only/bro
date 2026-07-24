@@ -123,6 +123,17 @@ describe("natural-language intents", () => {
 
     assert.equal(hidden.action, "history");
     assert.equal(hidden.historyVisible, false);
+    const specific = validateIntent({
+      action: "history",
+      project: null,
+      repository: null,
+      task: null,
+      jobId: "abcd1234",
+      instructionAction: null,
+      historyVisible: false,
+      message: null,
+    });
+    assert.equal(specific.jobId, "abcd1234");
     assert.throws(() => validateIntent({
       action: "history",
       project: null,

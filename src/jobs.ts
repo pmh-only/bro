@@ -40,6 +40,7 @@ export interface Job {
   lastPromptAt?: number;
   consumedTokens?: number;
   notified: boolean;
+  hidden: boolean;
 }
 
 interface EnqueueOptions {
@@ -115,7 +116,8 @@ export class JobStore {
         prompt_attempts INTEGER NOT NULL DEFAULT 0,
         last_prompt_at INTEGER,
         consumed_tokens INTEGER,
-        notified INTEGER NOT NULL DEFAULT 0
+        notified INTEGER NOT NULL DEFAULT 0,
+        hidden INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX IF NOT EXISTS jobs_state_created ON jobs(state, created_at);
       CREATE TABLE IF NOT EXISTS job_instructions (
@@ -189,6 +191,9 @@ export class JobStore {
     if (!columns.some((column) => column.name === "consumed_tokens")) {
       this.database.exec("ALTER TABLE jobs ADD COLUMN consumed_tokens INTEGER");
     }
+    if (!columns.some((column) => column.name === "hidden")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0");
+    }
     const instructionColumns = this.database.prepare("PRAGMA table_info(job_instructions)").all() as Array<{ name: string }>;
     if (!instructionColumns.some((column) => column.name === "attachments")) {
       this.database.exec("ALTER TABLE job_instructions ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'");
@@ -236,6 +241,7 @@ export class JobStore {
       projectSequence,
       promptAttempts: 0,
       notified: false,
+      hidden: false,
     };
     this.save(job);
     return job;
@@ -248,8 +254,8 @@ export class JobStore {
           id, scope, project_alias, project_directory, task, attachments, requested_by, channel_id, message_id, guild_id,
           state, created_at, started_at, finished_at, session_id, session_url, result, error, base_commit, progress,
           worktree_directory, worktree_branch, target_branch, project_sequence, integration_base, integration_head,
-          interrupt_action, prompt_attempts, last_prompt_at, consumed_tokens, notified
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          interrupt_action, prompt_attempts, last_prompt_at, consumed_tokens, notified, hidden
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           attachments = excluded.attachments,
           state = excluded.state, started_at = excluded.started_at, finished_at = excluded.finished_at,
@@ -261,7 +267,7 @@ export class JobStore {
           interrupt_action = excluded.interrupt_action,
           prompt_attempts = excluded.prompt_attempts,
           last_prompt_at = excluded.last_prompt_at, consumed_tokens = excluded.consumed_tokens,
-          notified = excluded.notified
+          notified = excluded.notified, hidden = excluded.hidden
       `)
       .run(...this.values(job));
   }
@@ -309,6 +315,14 @@ export class JobStore {
       INSERT INTO settings (key, value) VALUES ('job_history_visible', ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `).run(String(visible));
+  }
+
+  setJobHidden(id: string, hidden: boolean): Job | undefined {
+    const job = this.get(id);
+    if (!job) return undefined;
+    job.hidden = hidden;
+    this.save(job);
+    return job;
   }
 
   resume(): void {
@@ -519,6 +533,7 @@ export class JobStore {
       job.lastPromptAt ?? null,
       job.consumedTokens ?? null,
       job.notified ? 1 : 0,
+      job.hidden ? 1 : 0,
     ];
   }
 
@@ -556,6 +571,7 @@ export class JobStore {
       ...(row.last_prompt_at ? { lastPromptAt: Number(row.last_prompt_at) } : {}),
       ...(row.consumed_tokens !== null ? { consumedTokens: Number(row.consumed_tokens) } : {}),
       notified: Boolean(row.notified),
+      hidden: Boolean(row.hidden),
     };
   }
 

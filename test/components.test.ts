@@ -27,6 +27,7 @@ function job(state: JobState): Job {
     sessionUrl: "https://opencode.example/session/abcd",
     promptAttempts: 1,
     notified: false,
+    hidden: false,
   };
 }
 

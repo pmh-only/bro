@@ -636,6 +636,19 @@ async function main(): Promise<void> {
       }
 
       if (intent.action === "history") {
+        if (intent.jobId) {
+          const job = jobs.setJobHidden(intent.jobId, !intent.historyVisible);
+          if (!job) {
+            await editCard(statusMessage, "Job not found", `Job \`${inline(intent.jobId)}\` was not found.`);
+            return;
+          }
+          await editCard(
+            statusMessage,
+            intent.historyVisible ? "History entry shown" : "History entry hidden",
+            `Job \`${job.id}\` is now ${intent.historyVisible ? "visible" : "hidden"} in the Web UI.`,
+          );
+          return;
+        }
         jobs.setJobHistoryVisible(intent.historyVisible!);
         await editCard(
           statusMessage,

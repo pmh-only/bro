@@ -18,6 +18,7 @@ function job(state: JobState): Job {
     projectSequence: 1,
     promptAttempts: 1,
     notified: false,
+    hidden: false,
   };
 }
 

@@ -28,9 +28,9 @@ function response(job: Job): string {
 
 export function projectThreads(store: JobStore): ProjectThread[] {
   const projects = new Map<string, ThreadJob[]>();
-  const jobs = store.jobHistoryVisible()
-    ? store.history()
-    : store.history().filter((job) => job.state !== "completed" && job.state !== "failed" && job.state !== "cancelled");
+  const historyVisible = store.jobHistoryVisible();
+  const jobs = store.history().filter((job) => !job.hidden && (historyVisible
+    || (job.state !== "completed" && job.state !== "failed" && job.state !== "cancelled")));
   for (const job of jobs) {
     const jobs = projects.get(job.project.alias) ?? [];
     jobs.push({
