@@ -17,7 +17,6 @@ Job updates use Discord Components v2 status cards. Active jobs include refresh 
 Running cards show a brief progress report from OpenCode's active todo, assistant text, or current tool and update only when that report changes.
 Independent jobs run in parallel in isolated Git worktrees. For a new request that clearly modifies an active job, the router selects that exact parallel job and chooses **Queue**, **Replace**, or **Steer**; replies and **Add instruction** retain explicit controls. Choices and queued instructions persist across restarts.
 Global environment work and shell actions run as one tracked job from the bot data directory without creating a Git worktree or accessing registered project repositories.
-Discord jobs run in [OpenCode goal mode](https://github.com/prevalentWare/opencode-goal-plugin), which keeps the objective across turns and requires verification evidence before completion.
 
 ## How to deploy?
 
@@ -61,7 +60,6 @@ Only the home directory is persistent storage.
 * The TypeScript test suites run on Vitest with `npm test`.
 * Provider request timeouts are disabled for the selected OpenCode model, so the bot's task deadline controls long jobs.
 * OpenCode API requests use a dedicated dispatcher without Node's five-minute response timeout.
-* The container installs `@prevalentware/opencode-goal-plugin` for fresh and persisted OpenCode configurations. When using a separately managed OpenCode server, install that plugin in its server config before running jobs.
 * Jobs and Discord status message IDs are stored in SQLite. A periodic poller restores unfinished work after container restarts and asks OpenCode to continue until it reports verified success.
 * OpenCode commits only inside `bro/job/<job-id>` worktrees. The coordinator serializes integration per project, rebases each later job onto earlier work, rejects merge commits and force pushes, pushes normally, and fast-forwards the canonical branch.
 * Rebase conflicts are returned to the later job's OpenCode session; that job must preserve both changes, test, continue the rebase, and recommit before integration proceeds.

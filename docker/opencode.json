@@ -1,8 +1,5 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": [
-    "@prevalentware/opencode-goal-plugin@0.1.24"
-  ],
   "provider": {
     "anthropic": {
       "options": {

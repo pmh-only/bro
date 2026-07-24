@@ -200,13 +200,11 @@ export class OpenCodeService {
     const text = continuation
       ? [
           "The persisted Discord job is still incomplete. Continue working on the original task end-to-end.",
-          "Continue using the existing OpenCode goal and keep it aligned with the original task.",
           scope === "global"
             ? "Inspect the current environment and session state, finish the requested global work, and verify the result."
             : "Inspect the current repository and session state, finish verification, and commit all intended changes.",
           ...this.executionRules(scope),
           ...this.languageRules(),
-          "Before reporting success, close the goal as complete with concise evidence from the verification you performed.",
           `Only when every requested step has succeeded, end your response with ${successMarker}.`,
           "",
           task,
@@ -245,7 +243,6 @@ export class OpenCodeService {
           text: [
             "Additional instruction from the authorized Discord user for the current job:",
             instruction,
-            "Call update_goal_objective so the existing OpenCode goal covers this instruction as well as any unfinished original work.",
             ...this.executionRules(scope),
             ...this.languageRules(),
             `Only after this instruction is fully completed and verified, end your response with ${successMarker}.`,
@@ -363,8 +360,6 @@ export class OpenCodeService {
       ...this.executionRules(scope),
       ...this.languageRules(),
       "Make reasonable implementation decisions without asking interactive questions and run relevant verification.",
-      "Use OpenCode goal mode for this job. At the start, call create_goal with a concrete objective based on the request.",
-      "Before reporting success, call update_goal with status complete and concise evidence from the verification you performed.",
       ...(scope === "project" ? [
         "After completing and verifying the requested work, commit all intended changes. The coordinator will integrate and push them.",
         "Always include this Git trailer in the commit: Co-authored-by: Bro, the bot <bro@pmh.codes>",
