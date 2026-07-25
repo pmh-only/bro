@@ -98,6 +98,7 @@ describe("persistent project jobs", () => {
     job.baseCommit = "0123456789abcdef";
     job.progress = "Implementing persistence";
     job.consumedTokens = 12_345;
+    job.operationalDetails = "Persist /var/lib/example and expose port 9000.";
     job.promptAttempts = 1;
     job.lastPromptAt = Date.now();
     firstStore.save(job);
@@ -124,6 +125,8 @@ describe("persistent project jobs", () => {
     assert.equal(restored?.baseCommit, "0123456789abcdef");
     assert.equal(restored?.progress, "Implementing persistence");
     assert.equal(restored?.consumedTokens, 12_345);
+    assert.equal(restored?.operationalDetails, "Persist /var/lib/example and expose port 9000.");
+    assert.equal(restored?.operationalDetailsNotified, false);
     assert.equal(secondStore.jobHistoryVisible(), false);
     assert.equal(restored?.hidden, true);
     assert.deepEqual(restored?.attachments, [
@@ -188,6 +191,8 @@ describe("persistent project jobs", () => {
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN consumed_tokens");
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN attachments");
     oldDatabase.exec("ALTER TABLE jobs DROP COLUMN hidden");
+    oldDatabase.exec("ALTER TABLE jobs DROP COLUMN operational_details");
+    oldDatabase.exec("ALTER TABLE jobs DROP COLUMN operational_details_notified");
     oldDatabase.exec("DROP INDEX job_instructions_pending");
     oldDatabase.exec("ALTER TABLE job_instructions DROP COLUMN sequence");
     oldDatabase.exec("ALTER TABLE job_instructions DROP COLUMN completed_at");
@@ -200,6 +205,8 @@ describe("persistent project jobs", () => {
     assert.equal(migrated.get(legacyJob.id)?.consumedTokens, undefined);
     assert.deepEqual(migrated.get(legacyJob.id)?.attachments, []);
     assert.equal(migrated.get(legacyJob.id)?.hidden, false);
+    assert.equal(migrated.get(legacyJob.id)?.operationalDetails, undefined);
+    assert.equal(migrated.get(legacyJob.id)?.operationalDetailsNotified, false);
     assert.equal(migrated.activeInstruction(legacyJob.id)?.content, "still running");
     migrated.markInstructionCompleted(legacyInstruction.id);
     assert.equal(migrated.beginIntegrationIfIdle(legacyJob.id, "migration complete")?.state, "integrating");

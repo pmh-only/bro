@@ -31,8 +31,9 @@ import {
   removeJobWorktree,
 } from "./git.js";
 import { type Job, type JobInstruction, JobStore } from "./jobs.js";
-import { terminalJobNotification } from "./notices.js";
+import { hasPendingJobNotification, operationalDetailsNotification, terminalJobNotification } from "./notices.js";
 import { OpenCodeService, type TaskResult } from "./opencode.js";
+import { readOperationalDetails } from "./operational-details.js";
 import { ProjectRegistry } from "./projects.js";
 import { closeThreadServer, startThreadServer } from "./web.js";
 
@@ -139,13 +140,15 @@ async function main(): Promise<void> {
     }
   };
 
-  const notifyJob = async (job: Job, notification: MessageCreateOptions): Promise<void> => {
+  const notifyJob = async (job: Job, notification: MessageCreateOptions): Promise<boolean> => {
     try {
       const channel = await client.channels.fetch(job.channelId);
       if (!channel?.isSendable()) throw new Error("Discord job channel is not sendable");
       await channel.send(notification);
+      return true;
     } catch (error) {
       console.error(`Unable to notify Discord user ${job.requestedBy}`, error);
+      return false;
     }
   };
 
@@ -178,10 +181,27 @@ async function main(): Promise<void> {
     await publishJob(job);
     const notification = terminalJobNotification(job);
     if (notification && !job.notified) {
-      await notifyJob(job, notification);
-      job.notified = true;
-      jobs.save(job);
+      if (await notifyJob(job, notification)) {
+        job.notified = true;
+        jobs.save(job);
+      }
     }
+    const operational = operationalDetailsNotification(job);
+    if (operational && !job.operationalDetailsNotified) {
+      if (await notifyJob(job, operational)) {
+        job.operationalDetailsNotified = true;
+        jobs.save(job);
+      }
+    }
+  };
+
+  const captureOperationalDetails = async (job: Job): Promise<void> => {
+    if (!job.sessionId) return;
+    const details = await readOperationalDetails(config.operationalDetailsDirectory, job.sessionId);
+    if (!details || details === job.operationalDetails) return;
+    job.operationalDetails = details;
+    job.operationalDetailsNotified = false;
+    jobs.save(job);
   };
 
   const captureTokenUsage = async (job: Job): Promise<void> => {
@@ -366,6 +386,7 @@ async function main(): Promise<void> {
     if (snapshot.state === "busy") return;
     if (job.state === "conflicted") {
       if (snapshot.successful) {
+        await captureOperationalDetails(job);
         job.state = "integrating";
         job.progress = "Rechecking resolved rebase conflicts.";
         jobs.save(job);
@@ -383,6 +404,7 @@ async function main(): Promise<void> {
       return;
     }
     if (snapshot.successful) {
+      await captureOperationalDetails(job);
       const activeInstruction = jobs.activeInstruction(job.id);
       if (activeInstruction) jobs.markInstructionCompleted(activeInstruction.id);
       const instruction = jobs.pendingInstructions(job.id)[0];
@@ -496,6 +518,9 @@ async function main(): Promise<void> {
         jobs.save(job);
         await publishJob(job);
       }
+    }
+    for (const job of jobs.history().filter(hasPendingJobNotification)) {
+      await publishFinishedJob(job);
     }
   };
 
@@ -914,8 +939,7 @@ async function main(): Promise<void> {
     await opencode.close();
     throw error;
   }
-  const unfinishedPublications = jobs.history().filter((job) =>
-    job.state === "cancelled" || ((job.state === "completed" || job.state === "failed") && !job.notified));
+  const unfinishedPublications = jobs.history().filter((job) => job.state === "cancelled" || hasPendingJobNotification(job));
   const unfinishedCleanups = jobs.history().filter((job) =>
     job.state === "completed" && job.worktreeDirectory && job.worktreeBranch);
   void Promise.all([

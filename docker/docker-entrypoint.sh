@@ -42,6 +42,8 @@ mkdir -p "$config_dir"
 if [[ ! -e "$config_dir/opencode.json" ]]; then
   install -m 600 /app/docker/opencode.default.json "$config_dir/opencode.json"
 fi
+mkdir -p "$config_dir/tools" "${BRO_OPERATIONAL_DETAILS_DIR:-/home/opencode/data/operational-details}"
+install -m 600 /app/docker/operational_details.ts "$config_dir/tools/operational_details.ts"
 
 # Provider requests otherwise stop after five minutes, before the bot's task
 # deadline. Derive the overlay from the selected and persisted providers while

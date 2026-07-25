@@ -17,3 +17,18 @@ export function terminalJobNotification(job: Job): MessageCreateOptions | undefi
     reply: { messageReference: job.messageId, failIfNotExists: false },
   };
 }
+
+export function operationalDetailsNotification(job: Job): MessageCreateOptions | undefined {
+  if (job.state !== "completed" || !job.operationalDetails) return undefined;
+  return {
+    content: `<@${job.requestedBy}> **Operational details for job \`${job.id}\`**\n${job.operationalDetails}`,
+    allowedMentions: { parse: [], users: [job.requestedBy], repliedUser: false },
+    reply: { messageReference: job.messageId, failIfNotExists: false },
+  };
+}
+
+export function hasPendingJobNotification(job: Job): boolean {
+  const terminalNotice = (job.state === "completed" || job.state === "failed") && !job.notified;
+  const operationalNotice = job.state === "completed" && Boolean(job.operationalDetails) && !job.operationalDetailsNotified;
+  return terminalNotice || operationalNotice;
+}

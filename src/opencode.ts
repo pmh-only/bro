@@ -205,6 +205,7 @@ export class OpenCodeService {
             : "Inspect the current repository and session state, finish verification, and commit all intended changes.",
           ...this.executionRules(scope),
           ...this.languageRules(),
+          this.operationalDetailsRule(),
           `Only when every requested step has succeeded, end your response with ${successMarker}.`,
           "",
           task,
@@ -245,6 +246,7 @@ export class OpenCodeService {
             instruction,
             ...this.executionRules(scope),
             ...this.languageRules(),
+            this.operationalDetailsRule(),
             `Only after this instruction is fully completed and verified, end your response with ${successMarker}.`,
           ].join("\n\n"),
         }, ...this.fileParts(attachments)],
@@ -360,6 +362,7 @@ export class OpenCodeService {
       ...this.executionRules(scope),
       ...this.languageRules(),
       "Make reasonable implementation decisions without asking interactive questions and run relevant verification.",
+      this.operationalDetailsRule(),
       ...(scope === "project" ? [
         "After completing and verifying the requested work, commit all intended changes. The coordinator will integrate and push them.",
         "Always include this Git trailer in the commit: Co-authored-by: Bro, the bot <bro@pmh.codes>",
@@ -395,6 +398,10 @@ export class OpenCodeService {
       "Write all visible analysis, plans, todo items, tool narration, progress updates, prompts, and summaries in English.",
       "Write the final response as a concise English summary of the completed work and verification.",
     ];
+  }
+
+  private operationalDetailsRule(): string {
+    return "If the completed work has configuration instructions, persistent storage locations, added ports, service changes, deployment steps, or similar operational details, call operational_details once near the end with a concise operator-facing summary. Do not call it for ordinary implementation summaries.";
   }
 
   private async projectSession(

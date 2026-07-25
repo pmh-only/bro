@@ -40,6 +40,8 @@ export interface Job {
   lastPromptAt?: number;
   consumedTokens?: number;
   notified: boolean;
+  operationalDetails?: string;
+  operationalDetailsNotified: boolean;
   hidden: boolean;
 }
 
@@ -117,6 +119,8 @@ export class JobStore {
         last_prompt_at INTEGER,
         consumed_tokens INTEGER,
         notified INTEGER NOT NULL DEFAULT 0,
+        operational_details TEXT,
+        operational_details_notified INTEGER NOT NULL DEFAULT 0,
         hidden INTEGER NOT NULL DEFAULT 0
       );
       CREATE INDEX IF NOT EXISTS jobs_state_created ON jobs(state, created_at);
@@ -194,6 +198,12 @@ export class JobStore {
     if (!columns.some((column) => column.name === "hidden")) {
       this.database.exec("ALTER TABLE jobs ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0");
     }
+    if (!columns.some((column) => column.name === "operational_details")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN operational_details TEXT");
+    }
+    if (!columns.some((column) => column.name === "operational_details_notified")) {
+      this.database.exec("ALTER TABLE jobs ADD COLUMN operational_details_notified INTEGER NOT NULL DEFAULT 0");
+    }
     const instructionColumns = this.database.prepare("PRAGMA table_info(job_instructions)").all() as Array<{ name: string }>;
     if (!instructionColumns.some((column) => column.name === "attachments")) {
       this.database.exec("ALTER TABLE job_instructions ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'");
@@ -241,6 +251,7 @@ export class JobStore {
       projectSequence,
       promptAttempts: 0,
       notified: false,
+      operationalDetailsNotified: false,
       hidden: false,
     };
     this.save(job);
@@ -254,8 +265,9 @@ export class JobStore {
           id, scope, project_alias, project_directory, task, attachments, requested_by, channel_id, message_id, guild_id,
           state, created_at, started_at, finished_at, session_id, session_url, result, error, base_commit, progress,
           worktree_directory, worktree_branch, target_branch, project_sequence, integration_base, integration_head,
-          interrupt_action, prompt_attempts, last_prompt_at, consumed_tokens, notified, hidden
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          interrupt_action, prompt_attempts, last_prompt_at, consumed_tokens, notified, operational_details,
+          operational_details_notified, hidden
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           attachments = excluded.attachments,
           state = excluded.state, started_at = excluded.started_at, finished_at = excluded.finished_at,
@@ -267,7 +279,8 @@ export class JobStore {
           interrupt_action = excluded.interrupt_action,
           prompt_attempts = excluded.prompt_attempts,
           last_prompt_at = excluded.last_prompt_at, consumed_tokens = excluded.consumed_tokens,
-          notified = excluded.notified, hidden = excluded.hidden
+          notified = excluded.notified, operational_details = excluded.operational_details,
+          operational_details_notified = excluded.operational_details_notified, hidden = excluded.hidden
       `)
       .run(...this.values(job));
   }
@@ -533,6 +546,8 @@ export class JobStore {
       job.lastPromptAt ?? null,
       job.consumedTokens ?? null,
       job.notified ? 1 : 0,
+      job.operationalDetails ?? null,
+      job.operationalDetailsNotified ? 1 : 0,
       job.hidden ? 1 : 0,
     ];
   }
@@ -571,6 +586,8 @@ export class JobStore {
       ...(row.last_prompt_at ? { lastPromptAt: Number(row.last_prompt_at) } : {}),
       ...(row.consumed_tokens !== null ? { consumedTokens: Number(row.consumed_tokens) } : {}),
       notified: Boolean(row.notified),
+      ...(row.operational_details ? { operationalDetails: String(row.operational_details) } : {}),
+      operationalDetailsNotified: Boolean(row.operational_details_notified),
       hidden: Boolean(row.hidden),
     };
   }

@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import type { Job, JobState } from "../src/jobs.js";
-import { terminalJobNotice, terminalJobNotification } from "../src/notices.js";
+import {
+  hasPendingJobNotification,
+  operationalDetailsNotification,
+  terminalJobNotice,
+  terminalJobNotification,
+} from "../src/notices.js";
 
 function job(state: JobState): Job {
   return {
@@ -18,6 +23,7 @@ function job(state: JobState): Job {
     projectSequence: 1,
     promptAttempts: 1,
     notified: false,
+    operationalDetailsNotified: false,
     hidden: false,
   };
 }
@@ -40,5 +46,29 @@ describe("Discord job notices", () => {
     assert.equal(terminalJobNotice(job("running")), undefined);
     assert.equal(terminalJobNotice(job("cancelled")), undefined);
     assert.equal(terminalJobNotification(job("running")), undefined);
+  });
+
+  it("formats operational details as a separate completion reply", () => {
+    const completed = job("completed");
+    completed.operationalDetails = "Expose port `5432` and persist `/var/lib/postgresql`.";
+
+    assert.deepEqual(operationalDetailsNotification(completed), {
+      content: "<@1> **Operational details for job `abcd1234`**\nExpose port `5432` and persist `/var/lib/postgresql`.",
+      allowedMentions: { parse: [], users: ["1"], repliedUser: false },
+      reply: { messageReference: "message", failIfNotExists: false },
+    });
+    assert.equal(operationalDetailsNotification(job("failed")), undefined);
+  });
+
+  it("keeps completed operational details eligible for retry independently", () => {
+    const completed = job("completed");
+    completed.notified = true;
+    completed.operationalDetails = "Expose port 9000.";
+
+    assert.equal(hasPendingJobNotification(completed), true);
+    completed.operationalDetailsNotified = true;
+    assert.equal(hasPendingJobNotification(completed), false);
+    assert.equal(hasPendingJobNotification(job("failed")), true);
+    assert.equal(hasPendingJobNotification(job("cancelled")), false);
   });
 });

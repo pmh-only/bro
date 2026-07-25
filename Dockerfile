@@ -41,6 +41,7 @@ ENV NODE_ENV=production \
     OPENCODE_URL=http://127.0.0.1:4096 \
     WEB_PORT=8080 \
     CODE_SERVER_PORT=8081 \
+    BRO_OPERATIONAL_DETAILS_DIR=/home/opencode/data/operational-details \
     PROJECTS_FILE=/home/opencode/data/projects.json \
     PROJECTS_ROOT=/home/opencode/workspace
 
@@ -112,7 +113,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
-COPY docker/docker-entrypoint.sh docker/docker-healthcheck.sh docker/opencode-provider-timeouts.mjs ./docker/
+COPY docker/docker-entrypoint.sh docker/docker-healthcheck.sh docker/opencode-provider-timeouts.mjs docker/operational_details.ts ./docker/
 COPY docker/opencode.json ./docker/opencode.default.json
 COPY --chown=root:root --chmod=0440 docker/opencode.sudoers /etc/sudoers.d/opencode
 COPY docker/xdg-open /usr/local/bin/xdg-open

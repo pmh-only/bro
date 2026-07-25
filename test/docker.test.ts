@@ -50,6 +50,20 @@ describe("Docker OpenCode configuration", () => {
     assert.match(healthcheck, /CHECK_THREAD_SERVER:-true/);
   });
 
+  it("installs the operational details tool with a persistent spool directory", async () => {
+    const [dockerfile, entrypoint, tool] = await Promise.all([
+      readFile("Dockerfile", "utf8"),
+      readFile("docker/docker-entrypoint.sh", "utf8"),
+      readFile("docker/operational_details.ts", "utf8"),
+    ]);
+
+    assert.match(dockerfile, /BRO_OPERATIONAL_DETAILS_DIR=\/home\/opencode\/data\/operational-details/);
+    assert.match(dockerfile, /docker\/operational_details\.ts/);
+    assert.match(entrypoint, /config_dir\/tools\/operational_details\.ts/);
+    assert.match(tool, /@opencode-ai\/plugin/);
+    assert.match(tool, /context\.sessionID/);
+  });
+
   it("disables the five-minute provider timeout for new and persisted configs", async () => {
     const config = JSON.parse(await readFile("docker/opencode.json", "utf8")) as {
       plugin?: unknown;
