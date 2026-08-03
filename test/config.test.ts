@@ -22,6 +22,7 @@ describe("configuration", () => {
     assert.equal(config.jobPollIntervalMs, 10_000);
     assert.equal(config.jobContinueIntervalMs, 60_000);
     assert.equal(config.webPort, 8_080);
+    assert.equal(config.mcpPort, 8_082);
     assert.match(config.jobsDatabase, /jobs\.sqlite$/);
     assert.match(config.operationalDetailsDirectory, /operational-details$/);
     assert.match(config.worktreesRoot, /worktrees$/);

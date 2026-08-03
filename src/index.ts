@@ -31,6 +31,7 @@ import {
   removeJobWorktree,
 } from "./git.js";
 import { type Job, type JobInstruction, JobStore } from "./jobs.js";
+import { closeMcpServer, startMcpServer } from "./mcp.js";
 import { hasPendingJobNotification, operationalDetailsNotification, terminalJobNotification } from "./notices.js";
 import { OpenCodeService, type TaskResult } from "./opencode.js";
 import { readOperationalDetails } from "./operational-details.js";
@@ -112,6 +113,7 @@ async function main(): Promise<void> {
 
   let client: Client;
   let threadServer: Awaited<ReturnType<typeof startThreadServer>> | undefined;
+  let mcpServer: Awaited<ReturnType<typeof startMcpServer>> | undefined;
 
   const reply = (message: Message, content: string) =>
     message.reply({ content: truncate(content, DISCORD_LIMIT), allowedMentions: { parse: [], repliedUser: false } });
@@ -130,6 +132,7 @@ async function main(): Promise<void> {
     message.edit({ components: jobComponents(job, formatJob(job), config.codeServerPublicUrl), allowedMentions: { parse: [] } });
 
   const publishJob = async (job: Job): Promise<void> => {
+    if (!job.channelId || !job.messageId) return;
     try {
       const channel = await client.channels.fetch(job.channelId);
       if (!channel?.isTextBased()) throw new Error("Discord job channel is not text based");
@@ -178,6 +181,12 @@ async function main(): Promise<void> {
   let pollTimer: NodeJS.Timeout | undefined;
 
   const publishFinishedJob = async (job: Job) => {
+    if (!job.channelId || !job.messageId) {
+      job.notified = true;
+      job.operationalDetailsNotified = true;
+      jobs.save(job);
+      return;
+    }
     await publishJob(job);
     const notification = terminalJobNotification(job);
     if (notification && !job.notified) {
@@ -927,6 +936,72 @@ async function main(): Promise<void> {
 
   threadServer = await startThreadServer(jobs, config.webPort);
   console.log(`Project thread server listening on port ${config.webPort}`);
+  const enqueueMcpJob = (project: { alias: string; directory: string }, task: string, scope: "project" | "global" = "project") => {
+    const job = jobs.enqueue({
+      scope,
+      project,
+      task,
+      requestedBy: "mcp",
+      channelId: "",
+      messageId: "",
+    });
+    void pollJobs();
+    return job;
+  };
+  try {
+    mcpServer = await startMcpServer({
+      run(projectAlias, task) {
+        const project = projects.resolve(projectAlias);
+        if (!project) throw new Error(`Project ${projectAlias} is not registered`);
+        return enqueueMcpJob(project, task);
+      },
+      global(task) {
+        return enqueueMcpJob(globalProject, task, "global");
+      },
+      async instruction(jobId, instruction, action) {
+        const target = jobs.get(jobId);
+        if (!target || target.state !== "running" || !target.sessionId) {
+          throw new Error(`Job ${jobId} is not accepting instructions`);
+        }
+        const choice = jobs.createInstructionChoice(target.id, instruction, "mcp");
+        const resolved = await withPollingPaused(() => jobs.resolveInstructionChoice(choice.id, action, "mcp"));
+        if (!resolved) throw new Error(`Job ${jobId} changed before the instruction could be scheduled`);
+        void pollJobs();
+        return resolved.job;
+      },
+      async clone(projectAlias, repository, task) {
+        const project = await projects.cloneAndRegister({
+          alias: projectAlias,
+          repository,
+          projectsRoot: config.projectsRoot,
+          timeoutMs: config.cloneTimeoutMs,
+        });
+        return { project, ...(task ? { job: enqueueMcpJob(project, task) } : {}) };
+      },
+      projects: () => projects.list(),
+      status: (jobId) => jobId ? jobs.get(jobId) : jobs.active(),
+      async cancel(jobId) {
+        const job = await withPollingPaused(() => jobs.cancel(jobId));
+        if (job) void pollJobs();
+        return job;
+      },
+      history(visible, jobId) {
+        if (jobId) {
+          const job = jobs.setJobHidden(jobId, !visible);
+          if (!job) throw new Error(`Job ${jobId} was not found`);
+          return { visible, job };
+        }
+        jobs.setJobHistoryVisible(visible);
+        return { visible };
+      },
+    }, config.mcpPort);
+  } catch (error) {
+    await closeThreadServer(threadServer);
+    jobs.close();
+    await opencode.close();
+    throw error;
+  }
+  console.log(`MCP server listening on port ${config.mcpPort}`);
   try {
     client = await loginWithRetry(createClient, config.discordToken, {
       onRetry: (error, delayMs) => {
@@ -934,6 +1009,7 @@ async function main(): Promise<void> {
       },
     });
   } catch (error) {
+    await closeMcpServer(mcpServer);
     await closeThreadServer(threadServer);
     jobs.close();
     await opencode.close();
@@ -961,6 +1037,7 @@ async function main(): Promise<void> {
     if (pollTimer) clearInterval(pollTimer);
     for (const controller of requestControllers) controller.abort(new Error("Bot is shutting down"));
     await polling;
+    if (mcpServer) await closeMcpServer(mcpServer);
     if (threadServer) await closeThreadServer(threadServer);
     jobs.close();
     await opencode.close();

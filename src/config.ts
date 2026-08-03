@@ -21,6 +21,7 @@ export interface AppConfig {
   jobPollIntervalMs: number;
   jobContinueIntervalMs: number;
   webPort: number;
+  mcpPort: number;
   jobsDatabase: string;
   operationalDetailsDirectory: string;
   worktreesRoot: string;
@@ -118,6 +119,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     jobPollIntervalMs: positiveInteger(env.JOB_POLL_INTERVAL_MS, 10_000, "JOB_POLL_INTERVAL_MS"),
     jobContinueIntervalMs: positiveInteger(env.JOB_CONTINUE_INTERVAL_MS, 60_000, "JOB_CONTINUE_INTERVAL_MS"),
     webPort: positiveInteger(env.WEB_PORT, 8_080, "WEB_PORT"),
+    mcpPort: positiveInteger(env.MCP_PORT, 8_082, "MCP_PORT"),
     jobsDatabase,
     operationalDetailsDirectory: resolve(
       env.BRO_OPERATIONAL_DETAILS_DIR?.trim() || join(dirname(jobsDatabase), "operational-details"),

@@ -35,7 +35,7 @@ describe("Docker OpenCode configuration", () => {
     assert.match(dockerfile, /apt-get install[^\n]+build-essential jq pkg-config python3 ripgrep vim wget/);
   });
 
-  it("serves project threads on 8080 and code-server on 8081", async () => {
+  it("serves project threads, code-server, and MCP on separate ports", async () => {
     const [dockerfile, entrypoint, healthcheck] = await Promise.all([
       readFile("Dockerfile", "utf8"),
       readFile("docker/docker-entrypoint.sh", "utf8"),
@@ -44,10 +44,13 @@ describe("Docker OpenCode configuration", () => {
 
     assert.match(dockerfile, /WEB_PORT=8080/);
     assert.match(dockerfile, /CODE_SERVER_PORT=8081/);
-    assert.match(dockerfile, /EXPOSE 4096 8080 8081/);
+    assert.match(dockerfile, /MCP_PORT=8082/);
+    assert.match(dockerfile, /EXPOSE 4096 8080 8081 8082/);
     assert.match(entrypoint, /CODE_SERVER_PORT:-8081/);
     assert.match(healthcheck, /WEB_PORT:-8080/);
     assert.match(healthcheck, /CHECK_THREAD_SERVER:-true/);
+    assert.match(healthcheck, /MCP_PORT:-8082/);
+    assert.match(healthcheck, /CHECK_MCP_SERVER:-true/);
   });
 
   it("installs the operational details tool with a persistent spool directory", async () => {

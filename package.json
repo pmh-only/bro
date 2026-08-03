@@ -16,10 +16,12 @@
     "check": "npm run build && npm test"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@opencode-ai/sdk": "^1.18.2",
     "discord.js": "^14.27.0",
     "dotenv": "^17.4.2",
-    "undici": "^6.27.0"
+    "undici": "^6.27.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
