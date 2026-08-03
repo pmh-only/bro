@@ -9,6 +9,7 @@ import {
   TextInputStyle,
 } from "discord.js";
 import type { InstructionAction, Job } from "./jobs.js";
+import { isSensitiveSecretRequest } from "./safety.js";
 
 interface CardOptions {
   accentColor?: number;
@@ -40,10 +41,11 @@ export function cardComponents(title: string, body: string, options: CardOptions
 
 export function jobComponents(job: Job, body: string, codeServerPublicUrl: string): ContainerBuilder[] {
   const buttons: ButtonBuilder[] = [];
-  if (job.sessionUrl) {
+  const sensitiveRequest = isSensitiveSecretRequest(job.task);
+  if (job.sessionUrl && !sensitiveRequest) {
     buttons.push(new ButtonBuilder().setLabel("Open in OpenCode").setStyle(ButtonStyle.Link).setURL(job.sessionUrl));
   }
-  if (job.state === "running" || job.state === "conflicted") {
+  if (!sensitiveRequest && (job.state === "running" || job.state === "conflicted")) {
     const codeServerUrl = new URL(codeServerPublicUrl);
     codeServerUrl.searchParams.set("folder", job.worktreeDirectory ?? job.project.directory);
     buttons.push(

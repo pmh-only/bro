@@ -17,6 +17,7 @@ import type { OpenCodeAttachment } from "./attachments.js";
 import type { AppConfig } from "./config.js";
 import { intentSchema, type NaturalLanguageIntent, type RoutableJob, validateIntent } from "./intents.js";
 import type { JobScope } from "./jobs.js";
+import { redactSensitiveText, secretSafetyPrompt } from "./safety.js";
 
 export const opencodeDispatcherOptions = {
   headersTimeout: 0,
@@ -68,17 +69,17 @@ function progressReport(todos: Todo[], parts: Part[]): string | undefined {
       ...group("Queued items", queued),
     ];
     if (!activity.length) activity.push("Finalizing completed steps.");
-    return [...activity, `Plan: ${completed}/${todos.length} steps completed`].join("\n");
+    return redactSensitiveText([...activity, `Plan: ${completed}/${todos.length} steps completed`].join("\n"));
   }
   const tool = [...parts].reverse().find((part): part is Extract<Part, { type: "tool" }> =>
     part.type === "tool" && (part.state.status === "running" || part.state.status === "pending"));
-  if (tool) return `Running ${brief(tool.state.status === "running" ? tool.state.title ?? tool.tool : tool.tool, 300)}`;
+  if (tool) return redactSensitiveText(`Running ${brief(tool.state.status === "running" ? tool.state.title ?? tool.tool : tool.tool, 300)}`);
   const text = parts
     .filter((part): part is Extract<Part, { type: "text" }> => part.type === "text" && !part.ignored)
     .map((part) => part.text)
     .filter(Boolean)
     .at(-1);
-  if (text) return brief(text);
+  if (text) return redactSensitiveText(brief(text));
   return undefined;
 }
 
@@ -205,6 +206,7 @@ export class OpenCodeService {
             : "Inspect the current repository and session state, finish verification, and commit all intended changes.",
           ...this.executionRules(scope),
           ...this.languageRules(),
+          ...secretSafetyPrompt(task),
           this.operationalDetailsRule(),
           `Only when every requested step has succeeded, end your response with ${successMarker}.`,
           "",
@@ -246,6 +248,7 @@ export class OpenCodeService {
             instruction,
             ...this.executionRules(scope),
             ...this.languageRules(),
+            ...secretSafetyPrompt(instruction),
             this.operationalDetailsRule(),
             `Only after this instruction is fully completed and verified, end your response with ${successMarker}.`,
           ].join("\n\n"),
@@ -305,7 +308,7 @@ export class OpenCodeService {
     if (!assistant || assistant.info.role !== "assistant") {
       return { state: "idle", successful: false, response: "", consumedTokens, ...(progress ? { progress } : {}), diffs: [] };
     }
-    const response = this.textResponse(assistant.parts);
+    const response = redactSensitiveText(this.textResponse(assistant.parts));
     const successful = response.includes(successMarker) && !assistant.info.error;
     let diffs: FileDiff[] = [];
     if (successful) {
@@ -318,7 +321,7 @@ export class OpenCodeService {
       response: response.replace(successMarker, "").trim(),
       consumedTokens,
       ...(progress ? { progress } : {}),
-      ...(assistant.info.error ? { error: errorMessage(assistant.info.error.data) } : {}),
+      ...(assistant.info.error ? { error: redactSensitiveText(errorMessage(assistant.info.error.data)) } : {}),
       diffs,
     };
   }
@@ -361,6 +364,7 @@ export class OpenCodeService {
         : "Complete this authorized Discord request end-to-end in the current project.",
       ...this.executionRules(scope),
       ...this.languageRules(),
+      ...secretSafetyPrompt(task),
       "Make reasonable implementation decisions without asking interactive questions and run relevant verification.",
       this.operationalDetailsRule(),
       ...(scope === "project" ? [

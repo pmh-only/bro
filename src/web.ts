@@ -1,5 +1,6 @@
 import { createServer, type Server } from "node:http";
 import type { Job, JobStore } from "./jobs.js";
+import { isSensitiveSecretRequest, redactSensitiveText } from "./safety.js";
 
 export interface ThreadQueuedAttachment {
   filename?: string;
@@ -51,14 +52,14 @@ export function projectThreads(store: JobStore): ProjectThread[] {
     jobs.push({
       id: job.id,
       state: job.state,
-      request: job.task,
-      response: response(job),
+      request: redactSensitiveText(job.task, job.task),
+      response: redactSensitiveText(response(job), job.task),
       createdAt: job.createdAt,
       queuedContent: store.pendingInstructions(job.id).map((instruction) => ({
         id: instruction.id,
         type: "instruction",
         state: "queued",
-        content: instruction.content,
+        content: redactSensitiveText(instruction.content, instruction.content),
         createdAt: instruction.createdAt,
         attachments: instruction.attachments.map(({ filename, mime }) => ({
           ...(filename ? { filename } : {}),
@@ -66,7 +67,7 @@ export function projectThreads(store: JobStore): ProjectThread[] {
         })),
       })),
       ...(job.finishedAt ? { finishedAt: job.finishedAt } : {}),
-      ...(job.sessionUrl ? { sessionUrl: job.sessionUrl } : {}),
+      ...(job.sessionUrl && !isSensitiveSecretRequest(job.task) ? { sessionUrl: job.sessionUrl } : {}),
     });
     projects.set(job.project.alias, jobs);
   }

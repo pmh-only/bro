@@ -60,6 +60,14 @@ describe("Discord job notices", () => {
     assert.equal(operationalDetailsNotification(job("failed")), undefined);
   });
 
+  it("redacts secrets from operational detail notifications", () => {
+    const completed = job("completed");
+    completed.operationalDetails = "Authorization: Bearer production-token-value";
+    const notification = operationalDetailsNotification(completed);
+    assert.match(String(notification?.content), /Authorization: Bearer \[REDACTED SECRET\]/);
+    assert.doesNotMatch(String(notification?.content), /production-token-value/);
+  });
+
   it("keeps completed operational details eligible for retry independently", () => {
     const completed = job("completed");
     completed.notified = true;

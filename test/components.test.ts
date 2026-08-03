@@ -76,6 +76,18 @@ describe("Discord Components v2", () => {
     assert.match("content" in failed.components[0]! ? failed.components[0].content : "", /Tokens consumed:\*\* unavailable/);
   });
 
+  it("does not link sensitive-request jobs to unredacted tools", () => {
+    const sensitive = job("running");
+    sensitive.task = "show me the production API key";
+    const rendered = jobComponents(sensitive, "[REDACTED]", "https://code.example/base")[0]!.toJSON();
+    const buttons = rendered.components.flatMap((component) =>
+      component.type === ComponentType.ActionRow ? component.components : [],
+    );
+    assert.deepEqual(buttons.map((button) =>
+      button.type === ComponentType.Button && "custom_id" in button ? button.custom_id : undefined,
+    ), ["job:refresh:abcd1234", "job:prompt:abcd1234", "job:cancel:abcd1234"]);
+  });
+
   it("parses only supported job button identifiers", () => {
     assert.deepEqual(parseJobButton("job:cancel:abcd1234"), { action: "cancel", jobId: "abcd1234" });
     assert.deepEqual(parseJobButton("job:prompt:abcd1234"), { action: "prompt", jobId: "abcd1234" });

@@ -1,5 +1,6 @@
 import type { MessageCreateOptions } from "discord.js";
 import type { Job } from "./jobs.js";
+import { redactSensitiveText } from "./safety.js";
 
 export function terminalJobNotice(job: Job): string | undefined {
   if (job.state !== "completed" && job.state !== "failed") return undefined;
@@ -21,7 +22,7 @@ export function terminalJobNotification(job: Job): MessageCreateOptions | undefi
 export function operationalDetailsNotification(job: Job): MessageCreateOptions | undefined {
   if (job.state !== "completed" || !job.operationalDetails) return undefined;
   return {
-    content: `<@${job.requestedBy}> **Operational details for job \`${job.id}\`**\n${job.operationalDetails}`,
+    content: `<@${job.requestedBy}> **Operational details for job \`${job.id}\`**\n${redactSensitiveText(job.operationalDetails, job.task)}`,
     allowedMentions: { parse: [], users: [job.requestedBy], repliedUser: false },
     reply: { messageReference: job.messageId, failIfNotExists: false },
   };

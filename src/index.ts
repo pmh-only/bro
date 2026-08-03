@@ -36,6 +36,7 @@ import { hasPendingJobNotification, operationalDetailsNotification, terminalJobN
 import { OpenCodeService, type TaskResult } from "./opencode.js";
 import { readOperationalDetails } from "./operational-details.js";
 import { ProjectRegistry } from "./projects.js";
+import { isSensitiveSecretRequest, redactSensitiveText } from "./safety.js";
 import { closeThreadServer, startThreadServer } from "./web.js";
 
 const DISCORD_LIMIT = 2_000;
@@ -65,17 +66,17 @@ function formatJob(job: Job): string {
     return `${heading}\nWaiting for the current ${job.scope === "global" ? "global" : "project"} job to finish.`;
   }
   if (job.state === "running") {
-    const session = job.sessionId ? `\nOpenCode session: \`${job.sessionId}\`` : "";
+    const session = job.sessionId && !isSensitiveSecretRequest(job.task) ? `\nOpenCode session: \`${job.sessionId}\`` : "";
     const attempts = job.promptAttempts > 1 ? `\nContinuation attempts: ${job.promptAttempts - 1}` : "";
-    const progress = job.progress ? `\n\n**Progress**\n${truncate(job.progress, 500)}` : "";
+    const progress = job.progress ? `\n\n**Progress**\n${truncate(redactSensitiveText(job.progress, job.task), 500)}` : "";
     return `${heading}${session}${attempts}${progress}`;
   }
   if (job.state === "cancelling") return `${heading}\nStopping the OpenCode session...`;
   if (job.state === "integrating") return `${heading}\nWaiting for ordered rebase-only integration.`;
-  if (job.state === "conflicted") return `${heading}\nResolving rebase conflicts from earlier parallel work.\n${job.error ?? "Inspecting conflicts."}`;
-  if (job.state === "completed") return truncate(`${heading}${elapsed ? ` in ${elapsed}` : ""}\n${job.result || "OpenCode completed without a text response."}`, DISCORD_LIMIT);
+  if (job.state === "conflicted") return `${heading}\nResolving rebase conflicts from earlier parallel work.\n${redactSensitiveText(job.error ?? "Inspecting conflicts.", job.task)}`;
+  if (job.state === "completed") return truncate(`${heading}${elapsed ? ` in ${elapsed}` : ""}\n${redactSensitiveText(job.result || "OpenCode completed without a text response.", job.task)}`, DISCORD_LIMIT);
   if (job.state === "cancelled") return `${heading}${elapsed ? ` after ${elapsed}` : ""}.`;
-  return truncate(`${heading}${elapsed ? ` after ${elapsed}` : ""}\n${job.error || "Unknown error"}`, DISCORD_LIMIT);
+  return truncate(`${heading}${elapsed ? ` after ${elapsed}` : ""}\n${redactSensitiveText(job.error || "Unknown error", job.task)}`, DISCORD_LIMIT);
 }
 
 function formatResult(result: TaskResult, committed?: ChangeStats): string {
@@ -91,7 +92,7 @@ function formatResult(result: TaskResult, committed?: ChangeStats): string {
   const permissionNote = result.deniedPermissions.length
     ? `\nRejected permissions: ${result.deniedPermissions.map(inline).join(", ")}`
     : "";
-  const response = result.response ? `\n\n${truncate(result.response, 1_250)}` : "";
+  const response = result.response ? `\n\n${truncate(redactSensitiveText(result.response), 1_250)}` : "";
   return `${changed}${permissionNote}${response}`;
 }
 
@@ -207,8 +208,9 @@ async function main(): Promise<void> {
   const captureOperationalDetails = async (job: Job): Promise<void> => {
     if (!job.sessionId) return;
     const details = await readOperationalDetails(config.operationalDetailsDirectory, job.sessionId);
-    if (!details || details === job.operationalDetails) return;
-    job.operationalDetails = details;
+    const safeDetails = details ? redactSensitiveText(details, job.task) : undefined;
+    if (!safeDetails || safeDetails === job.operationalDetails) return;
+    job.operationalDetails = safeDetails;
     job.operationalDetailsNotified = false;
     jobs.save(job);
   };
@@ -233,8 +235,8 @@ async function main(): Promise<void> {
     job.state = state;
     job.finishedAt = Date.now();
     delete job.progress;
-    if (result !== undefined) job.result = result;
-    if (error !== undefined) job.error = error;
+    if (result !== undefined) job.result = redactSensitiveText(result, job.task);
+    if (error !== undefined) job.error = redactSensitiveText(error, job.task);
     jobs.save(job);
     await publishFinishedJob(job);
   };
@@ -388,7 +390,7 @@ async function main(): Promise<void> {
       jobs.save(job);
     }
     if (snapshot.progress && snapshot.progress !== job.progress) {
-      job.progress = snapshot.progress;
+      job.progress = redactSensitiveText(snapshot.progress, job.task);
       jobs.save(job);
       await publishJob(job);
     }
@@ -430,13 +432,13 @@ async function main(): Promise<void> {
         await finishJob(job, "completed", formatResult({
           sessionId: job.sessionId,
           webUrl: job.sessionUrl ?? "",
-          response: snapshot.response,
+          response: redactSensitiveText(snapshot.response, job.task),
           diffs: snapshot.diffs,
           deniedPermissions: [],
         }, committed));
         return;
       }
-      const integrating = jobs.beginIntegrationIfIdle(job.id, snapshot.response);
+      const integrating = jobs.beginIntegrationIfIdle(job.id, redactSensitiveText(snapshot.response, job.task));
       if (integrating) {
         await publishJob(integrating);
         await integrateJob(integrating);
@@ -448,7 +450,7 @@ async function main(): Promise<void> {
     job.promptAttempts += 1;
     job.lastPromptAt = Date.now();
     job.progress = "Continuing unfinished work.";
-    if (snapshot.error) job.error = snapshot.error;
+    if (snapshot.error) job.error = redactSensitiveText(snapshot.error, job.task);
     jobs.save(job);
     const activeInstruction = jobs.activeInstruction(job.id);
     const currentTask = activeInstruction?.content ?? job.task;
@@ -514,7 +516,7 @@ async function main(): Promise<void> {
         await pollJob(job);
       } catch (error) {
         console.error(`Unable to poll OpenCode job ${job.id}`, error);
-        job.error = error instanceof Error ? error.message : String(error);
+        job.error = redactSensitiveText(error instanceof Error ? error.message : String(error), job.task);
         jobs.save(job);
         await publishJob(job);
       }
@@ -523,7 +525,7 @@ async function main(): Promise<void> {
       try {
         await startJob(job);
       } catch (error) {
-        job.error = error instanceof Error ? error.message : String(error);
+        job.error = redactSensitiveText(error instanceof Error ? error.message : String(error), job.task);
         jobs.save(job);
         await publishJob(job);
       }

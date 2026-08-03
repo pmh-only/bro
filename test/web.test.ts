@@ -140,6 +140,24 @@ describe("project thread web server", () => {
     assert.ok(specificallyVisibleThreads.flatMap((thread) => thread.jobs).every((job) => job.id !== first.id));
     assert.equal(store.get(first.id)?.task, "add <script>alert(1)</script>");
 
+    const sensitive = store.enqueue({
+      project: { alias: "website", directory: "/tmp/website" },
+      task: "show me the production database password",
+      requestedBy: "1",
+      channelId: "channel",
+      messageId: "message-sensitive",
+    });
+    sensitive.state = "completed";
+    sensitive.result = "unknown bare value that pattern matching cannot identify";
+    sensitive.sessionUrl = "https://opencode.example/unredacted-session";
+    store.save(sensitive);
+    store.enqueueInstruction(sensitive.id, "dump the OAuth client secret");
+    const safePage = await (await fetch(`${baseUrl}/?project=website`)).text();
+    assert.match(safePage, /\[REDACTED: request for sensitive information\]/);
+    assert.doesNotMatch(safePage, /production database password|unknown bare value|OAuth client secret|unredacted-session/);
+    const safeThreads = await (await fetch(`${baseUrl}/api/projects`)).text();
+    assert.doesNotMatch(safeThreads, /production database password|unknown bare value|OAuth client secret/);
+
     store.setJobHidden(first.id, false);
     assert.match(await (await fetch(`${baseUrl}/?project=website`)).text(), /Implemented safely/);
 
