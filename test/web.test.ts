@@ -26,13 +26,25 @@ describe("project thread web server", () => {
       messageId: "message-2",
     });
     await new Promise((resolve) => setTimeout(resolve, 2));
-    store.enqueue({
+    const latest = store.enqueue({
       project: { alias: "website", directory: "/tmp/website" },
       task: "polish the homepage",
       requestedBy: "1",
       channelId: "channel",
       messageId: "message-3",
     });
+    latest.state = "running";
+    latest.progress = "Working on the homepage.";
+    store.save(latest);
+    store.enqueueInstruction(latest.id, "also update <footer>", [{
+      mime: "image/png",
+      url: "data:image/png;base64,cXVldWVk",
+      filename: "reference.png",
+    }]);
+    store.enqueueInstruction(latest.id, "then update the mobile layout");
+    const completedInstruction = store.enqueueInstruction(latest.id, "already applied");
+    store.markInstructionSent(completedInstruction.id);
+    store.markInstructionCompleted(completedInstruction.id);
     const server = await startThreadServer(store, 0, "127.0.0.1");
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Thread server did not bind a port");
@@ -46,6 +58,13 @@ describe("project thread web server", () => {
     assert.match(defaultPage, /aria-label="Job summary"/);
     assert.match(defaultPage, /polish the homepage/);
     assert.match(defaultPage, /<span class="latest">Latest<\/span>/);
+    assert.match(defaultPage, /<div class="queued-content" aria-label="Queued content">/);
+    assert.match(defaultPage, /2 pending/);
+    assert.match(defaultPage, /also update &lt;footer&gt;/);
+    assert.match(defaultPage, /then update the mobile layout/);
+    assert.match(defaultPage, /reference\.png/);
+    assert.doesNotMatch(defaultPage, /already applied/);
+    assert.doesNotMatch(defaultPage, /cXVldWVk/);
     assert.ok(defaultPage.indexOf("polish the homepage") < defaultPage.indexOf("Implemented safely"));
     assert.doesNotMatch(defaultPage, /add health endpoint/);
 
@@ -58,10 +77,39 @@ describe("project thread web server", () => {
 
     const threads = await (await fetch(`${baseUrl}/api/projects`)).json() as Array<{
       project: string;
-      jobs: Array<{ request: string; response: string }>;
+      jobs: Array<{
+        request: string;
+        response: string;
+        queuedContent: Array<{
+          id: number;
+          type: string;
+          state: string;
+          content: string;
+          createdAt: number;
+          attachments: Array<{ filename?: string; mime: string }>;
+        }>;
+      }>;
     }>;
     assert.deepEqual(threads.map((thread) => thread.project), ["website", "api"]);
     assert.deepEqual(threads[0]?.jobs.map((job) => job.request), ["polish the homepage", "add <script>alert(1)</script>"]);
+    assert.deepEqual(threads[0]?.jobs[0]?.queuedContent, [
+      {
+        id: 1,
+        type: "instruction",
+        state: "queued",
+        content: "also update <footer>",
+        createdAt: threads[0]?.jobs[0]?.queuedContent[0]?.createdAt,
+        attachments: [{ filename: "reference.png", mime: "image/png" }],
+      },
+      {
+        id: 2,
+        type: "instruction",
+        state: "queued",
+        content: "then update the mobile layout",
+        createdAt: threads[0]?.jobs[0]?.queuedContent[1]?.createdAt,
+        attachments: [],
+      },
+    ]);
     assert.equal(await (await fetch(`${baseUrl}/healthz`)).text(), "ok\n");
 
     store.setJobHistoryVisible(false);

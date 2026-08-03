@@ -1,7 +1,21 @@
 import { createServer, type Server } from "node:http";
 import type { Job, JobStore } from "./jobs.js";
 
-interface ThreadJob {
+export interface ThreadQueuedAttachment {
+  filename?: string;
+  mime: string;
+}
+
+export interface ThreadQueuedContent {
+  id: number;
+  type: "instruction";
+  state: "queued";
+  content: string;
+  createdAt: number;
+  attachments: ThreadQueuedAttachment[];
+}
+
+export interface ThreadJob {
   id: string;
   state: Job["state"];
   request: string;
@@ -9,9 +23,10 @@ interface ThreadJob {
   createdAt: number;
   finishedAt?: number;
   sessionUrl?: string;
+  queuedContent: ThreadQueuedContent[];
 }
 
-interface ProjectThread {
+export interface ProjectThread {
   project: string;
   jobs: ThreadJob[];
 }
@@ -39,6 +54,17 @@ export function projectThreads(store: JobStore): ProjectThread[] {
       request: job.task,
       response: response(job),
       createdAt: job.createdAt,
+      queuedContent: store.pendingInstructions(job.id).map((instruction) => ({
+        id: instruction.id,
+        type: "instruction",
+        state: "queued",
+        content: instruction.content,
+        createdAt: instruction.createdAt,
+        attachments: instruction.attachments.map(({ filename, mime }) => ({
+          ...(filename ? { filename } : {}),
+          mime,
+        })),
+      })),
       ...(job.finishedAt ? { finishedAt: job.finishedAt } : {}),
       ...(job.sessionUrl ? { sessionUrl: job.sessionUrl } : {}),
     });
@@ -63,6 +89,18 @@ function escapeHtml(value: string): string {
   })[character]!);
 }
 
+function queuedContent(job: ThreadJob): string {
+  if (!job.queuedContent.length) return "";
+  return `<div class="queued-content" aria-label="Queued content">
+    <div class="queue-heading"><strong>Queued content</strong><span>${job.queuedContent.length} pending</span></div>
+    <ol>${job.queuedContent.map((item) => `<li>
+      <div class="queue-item-heading"><span>Instruction</span><span class="state queued">${item.state}</span><time datetime="${new Date(item.createdAt).toISOString()}">${new Date(item.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" })} UTC</time></div>
+      <pre>${escapeHtml(item.content || "(attachment-only instruction)")}</pre>
+      ${item.attachments.length ? `<div class="queue-attachments">${item.attachments.map((attachment) => `<span>${escapeHtml(attachment.filename ?? attachment.mime)}</span>`).join("")}</div>` : ""}
+    </li>`).join("")}</ol>
+  </div>`;
+}
+
 function page(threads: ProjectThread[], selectedProject: string | null, historyVisible: boolean): string {
   const selected = threads.find((thread) => thread.project === selectedProject) ?? threads[0];
   const jobs = threads.flatMap((thread) => thread.jobs);
@@ -84,6 +122,7 @@ function page(threads: ProjectThread[], selectedProject: string | null, historyV
             <header><code>#${job.id}</code><span class="state ${job.state}">${job.state}</span>${index === 0 ? '<span class="latest">Latest</span>' : ""}<time datetime="${new Date(job.createdAt).toISOString()}">${new Date(job.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" })} UTC</time></header>
             <div class="message request"><strong>Request</strong><pre>${escapeHtml(job.request)}</pre></div>
             <div class="message response"><strong>Response</strong><pre>${escapeHtml(job.response)}</pre></div>
+            ${queuedContent(job)}
             ${job.sessionUrl ? `<a class="session-link" href="${escapeHtml(job.sessionUrl)}" target="_blank" rel="noreferrer">Open in OpenCode</a>` : ""}
           </article>`).join("")}
         </div>
@@ -97,6 +136,7 @@ function page(threads: ProjectThread[], selectedProject: string | null, historyV
 <meta http-equiv="refresh" content="15"><title>Bro project threads</title>
 <style>
 :root{color-scheme:dark;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#090c0f;color:#e8edf2;--line:#28313a;--muted:#82909d;--green:#74e39a;--blue:#7795ff;--yellow:#f4cf65;--red:#ff767f}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(circle at 75% -10%,#17253a 0,transparent 34rem),linear-gradient(#090c0f,#0c1014)}body:before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.16;background-image:linear-gradient(#62708020 1px,transparent 1px),linear-gradient(90deg,#62708020 1px,transparent 1px);background-size:32px 32px}main{position:relative;width:min(1320px,calc(100% - 40px));margin:52px auto 80px}.eyebrow,.section-label{color:var(--green);font-size:11px;font-weight:700;letter-spacing:.17em;text-transform:uppercase}h1{font:750 clamp(34px,6vw,64px)/.95 system-ui,sans-serif;letter-spacing:-.045em;margin:10px 0 14px}.lede{color:var(--muted);margin:0}.dashboard-header{display:flex;align-items:end;justify-content:space-between;gap:28px;margin-bottom:42px}.summary{display:flex;border:1px solid var(--line);background:#0c1117cc;box-shadow:0 16px 48px #0005}.summary div{min-width:92px;padding:13px 16px;border-left:1px solid var(--line)}.summary div:first-child{border:0}.summary strong{display:block;color:#f6f8fa;font:700 20px/1 system-ui,sans-serif}.summary span{display:block;color:#697785;font-size:9px;letter-spacing:.13em;text-transform:uppercase;margin-top:7px}.layout{display:grid;grid-template-columns:240px minmax(0,1fr);gap:28px;align-items:start}nav{position:sticky;top:24px;border:1px solid var(--line);background:#0d1218e8;padding:10px;backdrop-filter:blur(12px);box-shadow:0 18px 50px #0004}nav p{margin:4px 9px 10px;color:#697785;font-size:10px;letter-spacing:.16em;text-transform:uppercase}nav a{display:grid;grid-template-columns:8px minmax(0,1fr) auto;align-items:center;gap:10px;color:#acb6c0;text-decoration:none;padding:12px 10px;border-left:2px solid transparent;transition:background .15s,color .15s}nav a:hover{background:#171e26;color:#fff}nav a.active{background:#172019;border-left-color:var(--green);color:var(--green)}nav a span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}nav small{color:#64717d}.project-state{width:7px;height:7px;border-radius:50%;background:#697785}.project-state.completed{background:var(--green)}.project-state.failed,.project-state.cancelled,.project-state.conflicted{background:var(--red)}.project-state.running,.project-state.integrating{background:var(--blue);box-shadow:0 0 12px var(--blue)}.project-state.queued,.project-state.cancelling{background:var(--yellow)}.no-projects{display:block;padding:10px;color:#697785}section{min-width:0;margin-bottom:56px}.project-heading{display:flex;align-items:end;justify-content:space-between;border-bottom:1px solid var(--line);padding:2px 2px 15px;margin-bottom:18px}.project-heading h2{font:700 25px/1 system-ui,sans-serif;letter-spacing:-.025em;margin:7px 0 0}.project-heading p{color:#697785;font-size:11px;margin:0}.thread{display:grid;gap:16px}.job{position:relative;background:linear-gradient(125deg,#121820,#0f141a);border:1px solid var(--line);border-left:3px solid var(--blue);padding:20px;box-shadow:0 14px 35px #0004}.job.completed{border-left-color:var(--green)}.job.failed,.job.cancelled,.job.conflicted{border-left-color:var(--red)}.job.queued,.job.cancelling{border-left-color:var(--yellow)}header{display:flex;gap:10px;align-items:center;color:var(--muted);font-size:11px}header code{color:#b8c3ce}.state,.latest{padding:3px 7px;border:1px solid currentColor;text-transform:uppercase;font-size:9px;letter-spacing:.08em}.state.completed{color:var(--green)}.state.failed,.state.cancelled,.state.conflicted{color:var(--red)}.state.running,.state.integrating{color:var(--blue)}.state.queued,.state.cancelling{color:var(--yellow)}.latest{color:#8d99a5;border-color:#3a4550}header time{margin-left:auto;color:#697785}.message{margin-top:18px}.message strong{display:block;color:#768492;font-size:10px;text-transform:uppercase;letter-spacing:.14em}.message pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:7px 0 0;font:14px/1.6 inherit;color:#dce2e8}.response{border-top:1px dashed #303945;padding-top:17px}.session-link{display:inline-block;margin-top:18px;border:1px solid #405790;color:#a9bbff;text-decoration:none;padding:8px 11px;font-size:11px}.session-link:hover{background:#17213a;color:#fff}.empty{padding:32px;border:1px dashed #3b4652;color:var(--muted);background:#0d1218}@media(max-width:760px){main{width:min(100% - 24px,680px);margin-top:28px}.dashboard-header{display:block;margin-bottom:26px}.summary{margin-top:24px;width:100%}.summary div{flex:1;min-width:0}.layout{display:block}nav{position:static;display:flex;overflow-x:auto;margin-bottom:24px}nav p{display:none}nav a{flex:0 0 auto;grid-template-columns:8px auto auto;border-left:0;border-bottom:2px solid transparent}nav a.active{border-left:0;border-bottom-color:var(--green)}.job{padding:16px}header{flex-wrap:wrap}header time{width:100%;margin:2px 0 0}.project-heading{align-items:center}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+.queued-content{margin-top:18px;border:1px solid #6b572b;background:#17140d}.queue-heading{display:flex;align-items:center;justify-content:space-between;padding:10px 13px;border-bottom:1px solid #6b572b;color:var(--yellow);font-size:11px;letter-spacing:.1em;text-transform:uppercase}.queue-heading span{color:#b9a777;font-size:9px}.queued-content ol{list-style:none;margin:0;padding:0;counter-reset:queued}.queued-content li{padding:13px;counter-increment:queued}.queued-content li+li{border-top:1px solid #3e3522}.queue-item-heading{display:flex;align-items:center;gap:9px;color:#b9a777;font-size:10px;text-transform:uppercase}.queue-item-heading>span:first-child:after{content:" " counter(queued)}.queue-item-heading time{margin-left:auto;color:#756b53}.queued-content pre{margin:9px 0 0;color:#e5ddc9;white-space:pre-wrap;overflow-wrap:anywhere}.queue-attachments{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.queue-attachments span{padding:3px 7px;border:1px solid #55482c;color:#c5b483;font-size:10px}
 </style></head><body><main><div class="dashboard-header"><div><span class="eyebrow">Bro / Activity log</span><h1>Project threads</h1><p class="lede">Discord requests and OpenCode responses, refreshed every 15 seconds.</p></div><div class="summary" aria-label="Job summary"><div><strong>${threads.length}</strong><span>Projects</span></div><div><strong>${activeJobs}</strong><span>Active</span></div><div><strong>${jobs.length}</strong><span>Visible jobs</span></div></div></div>${historyNotice}<div class="layout">${navigation}<div>${project}</div></div></main></body></html>`;
 }
 
