@@ -63,7 +63,7 @@ NODE_ENV=production code-server \
 code_server_pid=$!
 
 for _ in $(seq 1 90); do
-  if CHECK_THREAD_SERVER=false /app/docker/docker-healthcheck.sh >/dev/null 2>&1; then
+  if CHECK_THREAD_SERVER=false CHECK_MCP_SERVER=false /app/docker/docker-healthcheck.sh >/dev/null 2>&1; then
     break
   fi
   if ! kill -0 "$opencode_pid" 2>/dev/null; then
@@ -77,7 +77,7 @@ for _ in $(seq 1 90); do
   sleep 1
 done
 
-if ! CHECK_THREAD_SERVER=false /app/docker/docker-healthcheck.sh >/dev/null 2>&1; then
+if ! CHECK_THREAD_SERVER=false CHECK_MCP_SERVER=false /app/docker/docker-healthcheck.sh >/dev/null 2>&1; then
   echo "OpenCode and code-server did not become healthy within 90 seconds" >&2
   shutdown
   exit 1

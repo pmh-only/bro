@@ -47,6 +47,10 @@ describe("Docker OpenCode configuration", () => {
     assert.match(dockerfile, /MCP_PORT=8082/);
     assert.match(dockerfile, /EXPOSE 4096 8080 8081 8082/);
     assert.match(entrypoint, /CODE_SERVER_PORT:-8081/);
+    assert.equal(
+      entrypoint.match(/CHECK_THREAD_SERVER=false CHECK_MCP_SERVER=false \/app\/docker\/docker-healthcheck\.sh/g)?.length,
+      2,
+    );
     assert.match(healthcheck, /WEB_PORT:-8080/);
     assert.match(healthcheck, /CHECK_THREAD_SERVER:-true/);
     assert.match(healthcheck, /MCP_PORT:-8082/);
