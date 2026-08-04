@@ -11,7 +11,7 @@ function job(id: string): Job {
     scope: "project",
     project: { alias: "demo", directory: "/tmp/demo" },
     task: "test task",
-    attachments: [],
+    attachments: [{ mime: "text/plain", url: `data:text/plain;base64,${"eA==".repeat(1_000)}`, filename: "large.txt" }],
     requestedBy: "mcp",
     channelId: "",
     messageId: "",
@@ -22,7 +22,15 @@ function job(id: string): Job {
     notified: false,
     operationalDetailsNotified: false,
     hidden: false,
+    result: "abcdefghij",
   };
+}
+
+function jsonResult(response: Awaited<ReturnType<Client["callTool"]>>): unknown {
+  const content = (response as { content: Array<{ type: string; text?: string }> }).content[0];
+  assert(content && content.type === "text");
+  if (typeof content.text !== "string") throw new Error("Tool did not return text content");
+  return JSON.parse(content.text);
 }
 
 describe("MCP server", () => {
@@ -51,7 +59,7 @@ describe("MCP server", () => {
       },
       status(jobId) {
         calls.push(`status:${jobId}`);
-        return job(jobId ?? "active-job");
+        return jobId ? job(jobId) : [job("active-1"), job("active-2")];
       },
       cancel(jobId) {
         calls.push(`cancel:${jobId}`);
@@ -72,9 +80,10 @@ describe("MCP server", () => {
 
     const tools = await client.listTools();
     assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), [
-      "cancel", "clone", "global", "help", "history", "instruction", "projects", "run", "status",
+      "cancel", "clone", "global", "help", "history", "instruction", "job_output", "projects", "run", "status",
     ]);
-    await client.callTool({ name: "run", arguments: { project: "demo", task: "build it" } });
+    const legacyRun = await client.callTool({ name: "run", arguments: { project: "demo", task: "build it" } });
+    const minimalRun = await client.callTool({ name: "run", arguments: { project: "demo", task: "build less", detail: "minimal" } });
     await client.callTool({ name: "global", arguments: { task: "install postgres" } });
     await client.callTool({ name: "instruction", arguments: { jobId: "job-1", instruction: "adjust it", action: "steer" } });
     await client.callTool({ name: "clone", arguments: { project: "new", repository: "https://example.com/new.git", task: "inspect" } });
@@ -82,11 +91,23 @@ describe("MCP server", () => {
     await client.callTool({ name: "status", arguments: { jobId: "job-1" } });
     await client.callTool({ name: "cancel", arguments: { jobId: "job-1" } });
     await client.callTool({ name: "history", arguments: { visible: false, jobId: "job-1" } });
+    const projectedProjects = await client.callTool({
+      name: "projects",
+      arguments: { fields: ["alias"], offset: 0, limit: 1 },
+    });
+    const activePage = await client.callTool({
+      name: "status",
+      arguments: { fields: ["id", "state"], offset: 0, limit: 1 },
+    });
+    const output = await client.callTool({
+      name: "job_output",
+      arguments: { jobId: "job-1", field: "result", offset: 2, maxChars: 4 },
+    });
     const help = await client.callTool({ name: "help", arguments: {} });
 
-    assert.equal(calls.length, 8);
     assert.deepEqual(calls, [
       "run:demo:build it",
+      "run:demo:build less",
       "global:install postgres",
       "instruction:job-1:adjust it:steer",
       "clone:new:https://example.com/new.git:inspect",
@@ -94,7 +115,21 @@ describe("MCP server", () => {
       "status:job-1",
       "cancel:job-1",
       "history:false:job-1",
+      "projects",
+      "status:undefined",
+      "status:job-1",
     ]);
+    assert.equal((jsonResult(legacyRun) as Job).attachments[0]?.filename, "large.txt");
+    assert.deepEqual(jsonResult(minimalRun), { id: "run-job", state: "queued" });
+    assert.deepEqual(jsonResult(projectedProjects), {
+      items: [{ alias: "demo" }], total: 1, offset: 0, limit: 1,
+    });
+    assert.deepEqual(jsonResult(activePage), {
+      items: [{ id: "active-1", state: "queued" }], total: 2, offset: 0, limit: 1, nextOffset: 1,
+    });
+    assert.deepEqual(jsonResult(output), {
+      jobId: "job-1", field: "result", content: "cdef", totalChars: 10, offset: 2, nextOffset: 6,
+    });
     assert.match(JSON.stringify(help.content), /queue/);
     assert.equal(await (await fetch(`${baseUrl}/healthz`)).text(), "ok\n");
 

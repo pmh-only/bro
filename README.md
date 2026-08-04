@@ -40,7 +40,7 @@ docker run -it -p 8080:8080 -p 8081:8081 -p 8082:8082 -p 4096:4096 \
 Only the home directory is persistent storage.
 * Browse project request/response threads at http://localhost:8080. Projects and jobs are ordered by latest activity; use the left project navigation to switch threads. Ask the Discord bot in natural language to hide or show completed job history, globally or for a specific job ID. The UI is read-only but contains job content, so expose it only through your authentication proxy or private network.
 * Open the `code-server` UI at http://localhost:8081.
-* External agents can connect to the unauthenticated Streamable HTTP MCP endpoint at `http://localhost:8082/mcp`. It exposes `run`, `global`, `instruction`, `clone`, `projects`, `status`, `cancel`, `history`, and `help`; keep this port on a restricted network. Set `MCP_PORT` to use a different dedicated port.
+* External agents can connect to the unauthenticated Streamable HTTP MCP endpoint at `http://localhost:8082/mcp`. It exposes `run`, `global`, `instruction`, `clone`, `projects`, `status`, `job_output`, `cancel`, `history`, and `help`; keep this port on a restricted network. Set `MCP_PORT` to use a different dedicated port. Use compact MCP response controls as described in [the MCP context guide](docs/mcp-context-guide.md).
 * Set `CODE_SERVER_PUBLIC_URL` when Discord users access code-server through a different hostname or authentication proxy.
 * [IMPORTANT] Log in with your git credentials and make them persistent.
 * Configure anything else you need in this environment (e.g., SSH keys, GPG signing enforcement).
