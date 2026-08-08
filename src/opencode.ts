@@ -145,7 +145,6 @@ export class OpenCodeService {
           agent: this.config.opencodeAgent,
           ...this.modelSelection(),
           tools: disabledTools,
-          format: { type: "json_schema", schema: intentSchema, retryCount: 2 },
           parts: this.promptParts(this.routingPrompt(request, projectAliases, routableJobs), attachments),
         },
         signal,
@@ -159,7 +158,7 @@ export class OpenCodeService {
       let structured = data?.info.structured;
       if (structured === undefined) {
         const text = this.textResponse(data?.parts ?? []);
-        if (text) structured = JSON.parse(text) as unknown;
+        if (text) structured = JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/gi, "")) as unknown;
       }
       return validateIntent(structured, routableJobs);
     } catch (error) {
@@ -466,7 +465,9 @@ export class OpenCodeService {
       "Interpret the authorized Discord user's natural-language request. Do not execute it.",
       "Perform the interpretation in English. Translate non-English input faithfully without changing its meaning.",
       "Always write task and message fields in English. Preserve project aliases, repository URLs, and job IDs exactly.",
-      "Return exactly one structured intent using these rules:",
+      "Return only one JSON object matching this schema, without Markdown or explanation:",
+      JSON.stringify(intentSchema),
+      "Use these rules:",
       "- run: start independent parallel work in an existing project. Use an exact alias and preserve the requested work in task.",
       "- global: run one environment-wide task or shell action that is not tied to a registered project. Set project to null and preserve the requested work in task. Never use global to modify registered projects.",
       "- instruction: modify exactly one listed parallel job. Set its exact jobId and choose queue, steer, or replace in instructionAction.",

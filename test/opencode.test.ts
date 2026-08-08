@@ -9,6 +9,7 @@ describe("OpenCode task lifecycle", () => {
   let sessions: Session[] = [];
   let createRequests = 0;
   let asyncPromptBodies: string[] = [];
+  let routingPromptBodies: string[] = [];
   let sessionStatuses: Record<string, { type: "idle" | "busy" }> = {};
   let sessionMessages: unknown[] = [];
   let sessionTodos: unknown[] = [];
@@ -26,6 +27,11 @@ describe("OpenCode task lifecycle", () => {
     if (request.method === "GET" && path === "/session") {
       response.setHeader("Content-Type", "application/json");
       response.end(JSON.stringify(sessions));
+      return;
+    }
+    if (request.method === "GET" && path === "/experimental/tool/ids") {
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify(["bash", "read"]));
       return;
     }
     if (request.method === "POST" && path === "/session") {
@@ -75,6 +81,28 @@ describe("OpenCode task lifecycle", () => {
       });
       return;
     }
+    if (request.method === "POST" && path.endsWith("/message")) {
+      let body = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk: string) => (body += chunk));
+      request.on("end", () => {
+        routingPromptBodies.push(body);
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify({
+          info: { id: "msg_router", role: "assistant", structured: undefined },
+          parts: [{
+            type: "text",
+            text: "```json\n{\"action\":\"projects\",\"project\":null,\"task\":null,\"repository\":null,\"jobId\":null,\"instructionAction\":null,\"historyVisible\":null,\"message\":null}\n```",
+          }],
+        }));
+      });
+      return;
+    }
+    if (request.method === "DELETE" && path.startsWith("/session/")) {
+      response.setHeader("Content-Type", "application/json");
+      response.end("true");
+      return;
+    }
     if (request.method === "GET" && path.endsWith("/message")) {
       response.setHeader("Content-Type", "application/json");
       response.end(JSON.stringify(sessionMessages));
@@ -116,6 +144,7 @@ describe("OpenCode task lifecycle", () => {
     sessions = [];
     createRequests = 0;
     asyncPromptBodies = [];
+    routingPromptBodies = [];
     sessionStatuses = {};
     sessionMessages = [];
     sessionTodos = [];
@@ -139,6 +168,27 @@ describe("OpenCode task lifecycle", () => {
     const service = new OpenCodeService(config);
 
     assert.equal(await service.assertHealthy(), "test");
+    await service.close();
+  });
+
+  it("routes from JSON text without OpenCode structured output", async () => {
+    const service = new OpenCodeService(loadConfig({
+      DISCORD_TOKEN: "test",
+      DISCORD_ALLOWED_USER_IDS: "1",
+      OPENCODE_URL: baseUrl,
+    }));
+
+    const intent = await service.interpretRequest("list projects", ["bro"], []);
+
+    assert.equal(intent.action, "projects");
+    const body = JSON.parse(routingPromptBodies[0]!) as {
+      format?: unknown;
+      tools: Record<string, boolean>;
+      parts: Array<{ text?: string }>;
+    };
+    assert.equal(body.format, undefined);
+    assert.deepEqual(body.tools, { bash: false, read: false });
+    assert.match(body.parts[0]?.text ?? "", /Return only one JSON object/);
     await service.close();
   });
 
